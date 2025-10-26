@@ -39,7 +39,9 @@ jobs:
 
       # Optional: SignPath open-source signing (configure repository secrets first)
       - name: Submit SignPath signing request
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         uses: signpath/github-action-submit-signing-request@v1
         with:
           organizationSlug: ${{ secrets.SIGNPATH_ORG_SLUG }}
