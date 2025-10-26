@@ -34,6 +34,10 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
   const [switching, setSwitching] = useState(false);
   const [switchMsg, setSwitchMsg] = useState<string>('');
   const [currentUserLanguage, setCurrentUserLanguage] = useState('');
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importLocaleName, setImportLocaleName] = useState('');
+  const [importFilePath, setImportFilePath] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   // 掛載時自動偵測一次（若尚未有路徑且未在偵測中）
   useEffect(() => {
@@ -191,6 +195,50 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
     }
   };
 
+  // 選擇要匯入的檔案
+  const handleSelectImportFile = async () => {
+    try {
+      const { SelectFile } = await import('../../wailsjs/go/main/App');
+      const path = await SelectFile('選擇語系檔案 (global.ini)');
+      if (path) {
+        setImportFilePath(path);
+      }
+    } catch (e: any) {
+      console.error('選擇檔案失敗:', e);
+    }
+  };
+
+  // 執行匯入
+  const handleImport = async () => {
+    if (!isPathValid || !scPath || !importLocaleName.trim() || !importFilePath) {
+      setSwitchMsg('請填寫語系名稱並選擇檔案');
+      return;
+    }
+
+    setIsImporting(true);
+    setSwitchMsg('');
+
+    try {
+      const { ImportLocaleFile } = await import('../../wailsjs/go/main/App');
+      await ImportLocaleFile(scPath, importLocaleName.trim(), importFilePath);
+      setSwitchMsg(`成功匯入語系：${importLocaleName}`);
+      
+      // 重新載入語系列表
+      const { ListInstalledLocalizations } = await import('../../wailsjs/go/main/App');
+      const locales = await ListInstalledLocalizations(scPath);
+      setInstalledLocales(Array.isArray(locales) ? locales : []);
+      
+      // 清空輸入
+      setImportLocaleName('');
+      setImportFilePath('');
+      setShowImportDialog(false);
+    } catch (e: any) {
+      setSwitchMsg(`匯入失敗：${e?.message || e}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // 移除自動偵測，改為用戶手動觸發
   // useEffect(() => {
   //   handleAutoDetect();
@@ -278,72 +326,200 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
               <span className="ml-1 text-gray-300">{installedLocales?.length ?? 0}</span>
             </div>
             {currentUserLanguage && (
-              <div className="text-xs text-gray-400 mb-2">目前 system.cfg 語系：
-                <span className="ml-1 text-orange-300">{currentUserLanguage}</span>
+              <div className="text-xs text-gray-400 mb-3">目前 system.cfg 語系：
+                <span className="ml-1 text-orange-300 font-semibold">{currentUserLanguage}</span>
               </div>
             )}
+
+            {/* 匯入按鈕 */}
+            <div className="mb-3">
+              <button
+                onClick={() => setShowImportDialog(!showImportDialog)}
+                className="px-4 py-2 rounded border text-sm bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-500 hover:to-red-500 border-orange-900/50"
+              >
+                + 匯入語系檔案
+              </button>
+            </div>
+
+            {/* 匯入對話框 */}
+            {showImportDialog && (
+              <div className="mb-3 p-4 bg-black/40 border border-orange-900/40 rounded-lg">
+                <h4 className="text-sm font-bold text-orange-400 mb-3">匯入新語系</h4>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-400 mb-1 block">語系名稱（例如：chinese_(traditional)）</label>
+                    <input
+                      type="text"
+                      value={importLocaleName}
+                      onChange={(e) => setImportLocaleName(e.target.value)}
+                      placeholder="輸入語系資料夾名稱..."
+                      className="w-full px-3 py-2 text-sm border rounded bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 focus:border-orange-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 mb-1 block">選擇 global.ini 檔案</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={importFilePath}
+                        readOnly
+                        placeholder="尚未選擇檔案..."
+                        className="flex-1 px-3 py-2 text-xs border rounded bg-black/50 text-gray-400 placeholder-gray-600 border-gray-700 font-mono"
+                      />
+                      <button
+                        onClick={handleSelectImportFile}
+                        className="px-3 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+                      >
+                        選擇檔案
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleImport}
+                      disabled={!importLocaleName.trim() || !importFilePath || isImporting}
+                      className={`flex-1 px-3 py-2 text-sm rounded border transition ${
+                        (!importLocaleName.trim() || !importFilePath || isImporting)
+                          ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                          : 'bg-green-600 text-white border-green-500 hover:bg-green-500'
+                      }`}
+                    >
+                      {isImporting ? '匯入中...' : '確認匯入'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowImportDialog(false);
+                        setImportLocaleName('');
+                        setImportFilePath('');
+                      }}
+                      className="px-3 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 語系列表表格 */}
             {installedLocales && installedLocales.length > 0 ? (
-              <div className="flex items-center gap-2 text-sm">
-                <label className="text-xs text-gray-400">選擇語系資料夾</label>
-                <select
-                  value={selectedLocale}
-                  onChange={(e) => setSelectedLocale(e.target.value)}
-                  className="px-3 py-2 bg-black/40 border border-orange-900/40 rounded text-gray-200 text-xs"
-                >
-                  {installedLocales.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={async () => {
-                    if (!isPathValid || !scPath || !selectedLocale || switching) return;
-                    setSwitching(true);
-                    setSwitchMsg('');
-                    try {
-                      const p = await SetUserLanguage(scPath, selectedLocale);
-                      setSwitchMsg(`已切換至 ${selectedLocale}（寫入：${p}）`);
-                      // refresh current language display
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-700">
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400">語系名稱</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400">狀態</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-400">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {installedLocales.map((locale, index) => (
+                      <tr key={index} className="border-b border-gray-800 hover:bg-gray-900/30">
+                        <td className="px-3 py-3 text-sm text-gray-300 font-mono">{locale}</td>
+                        <td className="px-3 py-3 text-xs">
+                          {currentUserLanguage === locale ? (
+                            <span className="px-2 py-1 bg-green-900/30 text-green-400 border border-green-900/50 rounded">使用中</span>
+                          ) : (
+                            <span className="text-gray-500">未使用</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-center flex items-center gap-2 justify-center">
+                          {currentUserLanguage !== locale && (
+                            <button
+                              onClick={async () => {
+                                if (!isPathValid || !scPath || switching) return;
+                                setSwitching(true);
+                                setSwitchMsg('');
+                                try {
+                                  const p = await SetUserLanguage(scPath, locale);
+                                  setSwitchMsg(`已切換至 ${locale}（寫入：${p}）`);
+                                  try {
+                                    const lang = await (await import('../../wailsjs/go/main/App')).GetUserLanguage(scPath);
+                                    setCurrentUserLanguage(lang || '');
+                                  } catch {}
+                                } catch (e: any) {
+                                  setSwitchMsg(`切換失敗：${e?.message || e}`);
+                                } finally {
+                                  setSwitching(false);
+                                }
+                              }}
+                              disabled={switching}
+                              className={`px-3 py-1 rounded border text-xs ${
+                                switching
+                                  ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                  : 'bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700'
+                              }`}
+                            >
+                              切換
+                            </button>
+                          )}
+                          <button
+                            onClick={async () => {
+                              if (!isPathValid || !scPath || switching) return;
+                              setSwitching(true);
+                              setSwitchMsg('');
+                              try {
+                                const { SaveFile, ExportLocaleFile } = await import('../../wailsjs/go/main/App');
+                                const dest = await SaveFile('匯出 global.ini', `${locale}-global.ini`);
+                                if (dest) {
+                                  await ExportLocaleFile(scPath, locale, dest);
+                                  setSwitchMsg(`已匯出 ${locale} 的 global.ini 至：${dest}`);
+                                }
+                              } catch (e: any) {
+                                setSwitchMsg(`匯出失敗：${e?.message || e}`);
+                              } finally {
+                                setSwitching(false);
+                              }
+                            }}
+                            disabled={switching}
+                            className={`px-3 py-1 rounded border text-xs ${
+                              switching
+                                ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'
+                            }`}
+                          >
+                            匯出
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-3 flex justify-end">
+                  <button
+                    onClick={async () => {
+                      if (!isPathValid || !scPath || switching) return;
+                      setSwitching(true);
+                      setSwitchMsg('');
                       try {
-                        const lang = await (await import('../../wailsjs/go/main/App')).GetUserLanguage(scPath);
-                        setCurrentUserLanguage(lang || '');
-                      } catch {}
-                    } catch (e: any) {
-                      setSwitchMsg(`切換失敗：${e?.message || e}`);
-                    } finally {
-                      setSwitching(false);
-                    }
-                  }}
-                  disabled={!isPathValid || !selectedLocale || switching}
-                  className={`px-3 py-2 rounded border text-xs ${(!isPathValid || !selectedLocale || switching) ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed' : 'bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700'}`}
-                >
-                  {switching ? '處理中…' : '切換至此語系'}
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!isPathValid || !scPath || switching) return;
-                    setSwitching(true);
-                    setSwitchMsg('');
-                    try {
-                      await ResetToDefaultLanguage(scPath);
-                      setSwitchMsg('已重設為原版語系（system.cfg 已移除）');
-                      setCurrentUserLanguage('');
-                    } catch (e: any) {
-                      setSwitchMsg(`重設失敗：${e?.message || e}`);
-                    } finally {
-                      setSwitching(false);
-                    }
-                  }}
-                  disabled={!isPathValid || switching}
-                  className={`px-3 py-2 rounded border text-xs ${(!isPathValid || switching) ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed' : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'}`}
-                >
-                  重設為原版語系
-                </button>
+                        await ResetToDefaultLanguage(scPath);
+                        setSwitchMsg('已重設為原版語系（system.cfg 已移除）');
+                        setCurrentUserLanguage('');
+                      } catch (e: any) {
+                        setSwitchMsg(`重設失敗：${e?.message || e}`);
+                      } finally {
+                        setSwitching(false);
+                      }
+                    }}
+                    disabled={!isPathValid || switching}
+                    className={`px-3 py-2 rounded border text-xs ${
+                      (!isPathValid || switching)
+                        ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                        : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'
+                    }`}
+                  >
+                    重設為原版語系
+                  </button>
+                </div>
               </div>
             ) : (
-              <span className="text-gray-400 text-sm">尚未偵測到任何語系資料夾</span>
+              <div className="text-center py-6 text-gray-400 text-sm">
+                <div className="mb-2">📋</div>
+                <div>尚未偵測到任何語系資料夾</div>
+              </div>
             )}
             {switchMsg && (
-              <div className="mt-2 text-xs text-orange-300">
+              <div className="mt-3 p-2 text-xs text-orange-300 bg-orange-950/20 border border-orange-900/40 rounded">
                 {switchMsg}
               </div>
             )}

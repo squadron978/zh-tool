@@ -6,6 +6,14 @@ export function CheckLocalizationExists(arg1) {
   return window['go']['main']['App']['CheckLocalizationExists'](arg1);
 }
 
+export function CompareINIFiles(arg1, arg2) {
+  return window['go']['main']['App']['CompareINIFiles'](arg1, arg2);
+}
+
+export function CompareINIFilesDetailed(arg1, arg2) {
+  return window['go']['main']['App']['CompareINIFilesDetailed'](arg1, arg2);
+}
+
 export function CreateLocalizationDir(arg1) {
   return window['go']['main']['App']['CreateLocalizationDir'](arg1);
 }
@@ -16,6 +24,14 @@ export function DetectStarCitizenPath() {
 
 export function DownloadAndInstallLocalization(arg1, arg2) {
   return window['go']['main']['App']['DownloadAndInstallLocalization'](arg1, arg2);
+}
+
+export function ExportLocaleFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportLocaleFile'](arg1, arg2, arg3);
+}
+
+export function GetCurrentLocaleINIPath(arg1) {
+  return window['go']['main']['App']['GetCurrentLocaleINIPath'](arg1);
 }
 
 export function GetLocalizationPath(arg1) {
@@ -34,22 +50,46 @@ export function HasLocalizationBase(arg1) {
   return window['go']['main']['App']['HasLocalizationBase'](arg1);
 }
 
+export function ImportLocaleFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ImportLocaleFile'](arg1, arg2, arg3);
+}
+
 export function ListInstalledLocalizations(arg1) {
   return window['go']['main']['App']['ListInstalledLocalizations'](arg1);
+}
+
+export function ReadINIFile(arg1) {
+  return window['go']['main']['App']['ReadINIFile'](arg1);
 }
 
 export function ResetToDefaultLanguage(arg1) {
   return window['go']['main']['App']['ResetToDefaultLanguage'](arg1);
 }
 
+export function SaveFile(arg1, arg2) {
+  return window['go']['main']['App']['SaveFile'](arg1, arg2);
+}
+
 export function SelectDirectory() {
   return window['go']['main']['App']['SelectDirectory']();
+}
+
+export function SelectFile(arg1) {
+  return window['go']['main']['App']['SelectFile'](arg1);
 }
 
 export function SetUserLanguage(arg1, arg2) {
   return window['go']['main']['App']['SetUserLanguage'](arg1, arg2);
 }
 
+export function UpdateINIFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateINIFile'](arg1, arg2, arg3);
+}
+
 export function ValidateStarCitizenPath(arg1) {
   return window['go']['main']['App']['ValidateStarCitizenPath'](arg1);
+}
+
+export function WriteINIFile(arg1, arg2) {
+  return window['go']['main']['App']['WriteINIFile'](arg1, arg2);
 }

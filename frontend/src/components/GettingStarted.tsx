@@ -2,6 +2,8 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { PathSelector } from './PathSelector';
+import { LocaleCompare } from './LocaleCompare';
+import { LocaleEditor } from './LocaleEditor';
 import { ListInstalledLocalizations, DownloadAndInstallLocalization, SetUserLanguage, DetectStarCitizenPath, ValidateStarCitizenPath, CheckLocalizationExists } from '../../wailsjs/go/main/App';
 
 export const GettingStarted = () => {
@@ -12,7 +14,7 @@ export const GettingStarted = () => {
   const [installLogs, setInstallLogs] = useState<string[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const logRef = useRef<HTMLDivElement | null>(null);
-  const [tabsValue, setTabsValue] = useState<'tab-auto' | 'tab-locale-path' | 'tab-locale-files'>('tab-auto');
+  const [tabsValue, setTabsValue] = useState<'tab-auto' | 'tab-locale-path' | 'tab-locale-files' | 'tab-locale-compare' | 'tab-locale-editor'>('tab-auto');
   const [advancedNotice, setAdvancedNotice] = useState('');
 
   // 追蹤目前是否已有 chinese_tranditional
@@ -136,6 +138,18 @@ export const GettingStarted = () => {
           >
             語系檔管理
           </Tabs.Trigger>
+          <Tabs.Trigger
+            value="tab-locale-compare"
+            className="px-4 py-2 text-sm rounded-t-lg data-[state=active]:bg-orange-900/30 data-[state=active]:text-orange-300 text-gray-300 hover:text-white"
+          >
+            語系檔案比對
+          </Tabs.Trigger>
+          <Tabs.Trigger
+            value="tab-locale-editor"
+            className="px-4 py-2 text-sm rounded-t-lg data-[state=active]:bg-orange-900/30 data-[state=active]:text-orange-300 text-gray-300 hover:text-white"
+          >
+            編輯語系檔案
+          </Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="tab-auto" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
@@ -187,6 +201,14 @@ export const GettingStarted = () => {
 
         <Tabs.Content value="tab-locale-files" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
           <PathSelector showPathSection={false} showLocaleSection={true} />
+        </Tabs.Content>
+
+        <Tabs.Content value="tab-locale-compare" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
+          <LocaleCompare />
+        </Tabs.Content>
+
+        <Tabs.Content value="tab-locale-editor" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
+          <LocaleEditor />
         </Tabs.Content>
       </Tabs.Root>
     </div>
