@@ -1,0 +1,24 @@
+/* 清理舊樣式，使用 Tailwind CSS */
+
+/* Success toast animations */
+@keyframes overlayFade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes toastPop {
+  0% { opacity: 0; transform: translateY(8px) scale(0.98); }
+  15% { opacity: 1; transform: translateY(0) scale(1); }
+  85% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-4px) scale(0.99); }
+}
+
+.success-overlay {
+  animation: overlayFade 3.5s ease-in-out forwards;
+}
+
+.toast-animate {
+  animation: toastPop 3.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}

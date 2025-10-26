@@ -1,0 +1,62 @@
+name: Build (Windows) and optional Sign
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
+
+      - name: Build (wails)
+        run: |
+          $env:PATH+=";${env:USERPROFILE}\go\bin"
+          wails build
+
+      - name: Upload unsigned binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: zh-tool-windows-unsigned
+          path: build/bin/*.exe
+
+      # Optional: SignPath open-source signing (configure repository secrets first)
+      - name: Submit SignPath signing request
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          organizationSlug: ${{ secrets.SIGNPATH_ORG_SLUG }}
+          projectSlug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signingPolicySlug: ${{ secrets.SIGNPATH_POLICY_SLUG }}
+          artifactConfigurationSlug: ${{ secrets.SIGNPATH_CONFIGURATION_SLUG }}
+          artifactPaths: build/bin/*.exe
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          signpathApiToken: ${{ secrets.SIGNPATH_API_TOKEN }}
+          waitForCompletion: true
+          signedArtifactDirectory: signed
+
+      - name: Upload signed binaries
+        if: ${{ steps.submit_signpath_signing_request.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zh-tool-windows-signed
+          path: signed/**
+
+
