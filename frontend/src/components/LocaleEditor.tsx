@@ -361,8 +361,39 @@ export const LocaleEditor = () => {
             </button>
           )}
         </div>
-        <div className="text-xs text-gray-400 break-all font-mono bg-black/40 p-3 rounded border border-gray-700 mb-3">
-          {currentFilePath || '尚未設定或找不到當前語系檔案'}
+        <div className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={currentFilePath}
+            readOnly
+            placeholder="尚未設定或找不到當前語系檔案..."
+            className="flex-1 px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 font-mono"
+          />
+          <button
+            onClick={async () => {
+              try {
+                const { SelectFile } = await import('../../wailsjs/go/main/App');
+                const path = await SelectFile('選擇語系檔案 (global.ini)');
+                if (path) {
+                  setCurrentFilePath(path);
+                  setAllItems([]);
+                  setEditedValues({});
+                  setIsDataLoaded(false);
+                  setSearchKeyword('');
+                  setActiveSearchKeyword('');
+                  setSortField('none');
+                  setSortOrder('asc');
+                  setShowReplacePanel(false);
+                  setMessage({ type: 'info', text: '請點擊「載入資料」按鈕開始編輯' });
+                }
+              } catch (e) {
+                console.error('選擇語系檔案失敗:', e);
+              }
+            }}
+            className={`px-4 py-2 rounded-lg text-sm font-medium border transition bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700`}
+          >
+            選擇檔案
+          </button>
         </div>
         {currentFilePath && isDataLoaded && (
           <div className="flex gap-2 text-xs text-gray-400">
