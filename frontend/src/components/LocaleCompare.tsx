@@ -7,6 +7,13 @@ interface INIKeyValue {
   value: string;
 }
 
+// 重複鍵的列資訊（行數以解析結果順序為準，1-based）
+interface DuplicateRow {
+  key: string;
+  value: string;
+  lineNumber: number;
+}
+
 export const LocaleCompare = () => {
   const { scPath, isPathValid } = useAppStore();
   const [currentFilePath, setCurrentFilePath] = useState('');
@@ -20,6 +27,56 @@ export const LocaleCompare = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [hasChineseLocale, setHasChineseLocale] = useState(false);
   const [compareStats, setCompareStats] = useState<{ currentCount: number; referenceCount: number } | null>(null);
+  const [compareMode, setCompareMode] = useState<'missing' | 'value' | 'duplicateKeys' | 'searchValue'>('missing');
+  const [duplicateRows, setDuplicateRows] = useState<DuplicateRow[]>([]);
+  const [deletingLine, setDeletingLine] = useState<number | null>(null);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<DuplicateRow | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // 用於比對時的字串正規化：
+  // - 標準化換行為 \n
+  // - 移除前後空白
+  // - 去除成對包覆的雙引號（若有）
+  const normalizeForCompare = (value: string | undefined | null): string => {
+    if (value == null) return '';
+    let v = String(value)
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    // Unicode 正規化（避免全形/相容字、結合字差異）
+    try {
+      v = v.normalize('NFC');
+    } catch {}
+
+    // 去除常見的不可見字元與 BOM/ZWSP 類
+    v = v.replace(/[\u200B-\u200D\uFEFF\u2060\u180E]/g, '');
+
+    // 統一空白類型：全形空白/不換行空白 -> 半形空白
+    v = v.replace(/[\u3000\u00A0]/g, ' ');
+
+    // 將連續的空白或 Tab 收斂成單一空白
+    v = v.replace(/[ \t]+/g, ' ');
+
+    // 去除成對外層引號（單引號或雙引號）
+    v = v.trim();
+    if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+      v = v.slice(1, -1).trim();
+    }
+    return v;
+  };
+
+  // 切換比對模式時，重置比對結果與選取狀態
+  useEffect(() => {
+    setMissingKeys([]);
+    setEditedValues({});
+    setSelectedKeys({});
+    setSelectAll(false);
+    setCompareStats(null);
+    setMessage(null);
+    setDuplicateRows([]);
+    setDeletingLine(null);
+    setSearchQuery('');
+  }, [compareMode]);
 
   // 檢查是否有 chinese_(traditional) 語系
   useEffect(() => {
@@ -77,6 +134,12 @@ export const LocaleCompare = () => {
         setReferenceFilePath(path);
         setMissingKeys([]);
         setEditedValues({});
+        setSelectedKeys({});
+        setSelectAll(false);
+        setCompareStats(null);
+        setMessage(null);
+        setDuplicateRows([]);
+        setDeletingLine(null);
       }
     } catch (e: any) {
       console.error('選擇檔案失敗:', e);
@@ -85,8 +148,16 @@ export const LocaleCompare = () => {
 
   // 執行比對
   const handleCompare = async () => {
-    if (!currentFilePath || !referenceFilePath) {
+    if (!currentFilePath) {
+      setMessage({ type: 'error', text: '找不到當前語系檔案' });
+      return;
+    }
+    if ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) {
       setMessage({ type: 'error', text: '請先選擇參考檔案' });
+      return;
+    }
+    if (compareMode === 'searchValue' && !searchQuery.trim()) {
+      setMessage({ type: 'info', text: '請先輸入搜尋條件' });
       return;
     }
 
@@ -97,38 +168,94 @@ export const LocaleCompare = () => {
     try {
       const { ReadINIFile, CompareINIFiles } = await import('../../wailsjs/go/main/App');
       
-      // 讀取兩個檔案的內容以獲取統計資訊
-      const [currentItems, referenceItems, missing] = await Promise.all([
-        ReadINIFile(currentFilePath),
-        ReadINIFile(referenceFilePath),
-        CompareINIFiles(currentFilePath, referenceFilePath)
-      ]);
+      // duplicateKeys 模式僅需當前檔案
+      const [currentItems, referenceItems, missing] = compareMode === 'duplicateKeys'
+        ? [await ReadINIFile(currentFilePath), null as any, null as any]
+        : await Promise.all([
+            ReadINIFile(currentFilePath),
+            ReadINIFile(referenceFilePath),
+            CompareINIFiles(currentFilePath, referenceFilePath)
+          ]);
 
       // 設定統計資訊
       setCompareStats({
         currentCount: currentItems?.length || 0,
-        referenceCount: referenceItems?.length || 0
+        referenceCount: (referenceItems as any)?.length || 0
       });
 
-      if (missing && missing.length > 0) {
-        setMissingKeys(missing);
-        // 初始化編輯值為參考檔案的值
+      // 依模式建立差異清單
+      let differences: INIKeyValue[] = [];
+      const currentMap = new Map<string, string>((currentItems || []).map((it: INIKeyValue) => [it.key, it.value]));
+      if (compareMode === 'duplicateKeys') {
+        // 找出重複鍵，並記錄每列的行數（以解析結果順序為準）
+        const keyToRows = new Map<string, DuplicateRow[]>();
+        (currentItems || []).forEach((it: INIKeyValue, idx: number) => {
+          const arr = keyToRows.get(it.key) || [];
+          arr.push({ key: it.key, value: it.value, lineNumber: idx + 1 });
+          keyToRows.set(it.key, arr);
+        });
+        const dups: DuplicateRow[] = [];
+        keyToRows.forEach((rows) => {
+          if (rows.length > 1) {
+            dups.push(...rows);
+          }
+        });
+        setDuplicateRows(dups);
+        if (dups.length > 0) {
+          setMessage({ type: 'info', text: `找到 ${dups.length} 列重複鍵（含同鍵的所有出現列）` });
+        } else {
+          setMessage({ type: 'success', text: '沒有重複鍵！' });
+        }
+        // 其餘模式的狀態清空
+        setMissingKeys([]);
+        setEditedValues({});
+        setSelectedKeys({});
+        setSelectAll(false);
+        return;
+      } else if (compareMode === 'value' || compareMode === 'searchValue') {
+        // 僅比較「原檔案有的 key」在參考檔案中的值是否不同，不包含缺失鍵
+        const referenceMap = new Map<string, string>((referenceItems || []).map((it: INIKeyValue) => [it.key, it.value]));
+        const q = normalizeForCompare(searchQuery).toLowerCase();
+        (currentItems || []).forEach((cur: INIKeyValue) => {
+          const refVal = referenceMap.get(cur.key);
+          if (typeof refVal === 'string') {
+            const nRef = normalizeForCompare(refVal);
+            const nCur = normalizeForCompare(cur.value);
+            const isDiff = nRef !== nCur;
+            const matches = compareMode === 'searchValue'
+              ? (q.length > 0 && (nRef.toLowerCase().includes(q) || nCur.toLowerCase().includes(q) || cur.key.toLowerCase().includes(q)))
+              : true;
+            if (isDiff && matches) {
+              // 差異清單的 value 保持參考檔案的值以供對照顯示
+              differences.push({ key: cur.key, value: refVal });
+            }
+          }
+        });
+      } else {
+        differences = missing || [];
+      }
+
+      if (differences && differences.length > 0) {
+        setMissingKeys(differences);
+        // 初始化編輯值：
+        // - 缺失模式：預設為參考檔案值
+        // - 比對值/比對指定值模式：預設為原檔案值（僅顯示）
         const initialValues: { [key: string]: string } = {};
         const initialSelected: { [key: string]: boolean } = {};
-        missing.forEach((item) => {
-          initialValues[item.key] = item.value;
+        differences.forEach((item) => {
+          initialValues[item.key] = (compareMode === 'value' || compareMode === 'searchValue') ? (currentMap.get(item.key) || '') : item.value;
           initialSelected[item.key] = true; // 預設全選
         });
         setEditedValues(initialValues);
         setSelectedKeys(initialSelected);
         setSelectAll(true);
-        setMessage({ type: 'info', text: `找到 ${missing.length} 個缺少的項目` });
+        setMessage({ type: 'info', text: `找到 ${differences.length} 個${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合且不同' : '缺少'}的項目` });
       } else {
         setMissingKeys([]);
         setEditedValues({});
         setSelectedKeys({});
         setSelectAll(false);
-        setMessage({ type: 'success', text: '沒有缺少的項目，兩個檔案完全一致！' });
+        setMessage({ type: 'success', text: `沒有${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合條件且不同' : '缺少的項目'}，兩個檔案完全一致！` });
       }
     } catch (e: any) {
       setMessage({ type: 'error', text: `比對失敗：${e?.message || e}` });
@@ -181,9 +308,11 @@ export const LocaleCompare = () => {
       const { UpdateINIFile } = await import('../../wailsjs/go/main/App');
       
       // 準備要更新的項目（只包含已勾選的）
+      // - 缺失模式：以使用者輸入（無則取參考值）
+      // - 比對值模式：以參考檔案的值覆蓋原檔案
       const updates: INIKeyValue[] = selectedItems.map((item) => ({
         key: item.key,
-        value: editedValues[item.key] || item.value
+        value: compareMode === 'value' ? item.value : (editedValues[item.key] || item.value)
       }));
 
       await UpdateINIFile(currentFilePath, referenceFilePath, updates);
@@ -213,6 +342,26 @@ export const LocaleCompare = () => {
     }
   };
 
+  // 刪除重複列（依行數）
+  const handleDeleteDuplicateLine = async (lineNumber: number) => {
+    if (!currentFilePath) return;
+    setDeletingLine(lineNumber);
+    setMessage(null);
+    try {
+      const { ReadINIFile, WriteINIFile } = await import('../../wailsjs/go/main/App');
+      const items = await ReadINIFile(currentFilePath) as INIKeyValue[];
+      const newItems = (items || []).filter((_, idx) => idx !== (lineNumber - 1));
+      await WriteINIFile(currentFilePath, newItems);
+      setMessage({ type: 'success', text: `已刪除第 ${lineNumber} 行` });
+      // 重新比對以刷新結果
+      await handleCompare();
+    } catch (e: any) {
+      setMessage({ type: 'error', text: `刪除失敗：${e?.message || e}` });
+    } finally {
+      setDeletingLine(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* 提示訊息 */}
@@ -229,49 +378,121 @@ export const LocaleCompare = () => {
       {/* 當前語系檔案 */}
       <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
         <h3 className="text-md font-bold text-orange-400 mb-2">當前語系檔案</h3>
-        <div className="text-xs text-gray-400 break-all font-mono bg-black/40 p-3 rounded border border-gray-700">
-          {currentFilePath || '尚未設定或找不到當前語系檔案'}
-        </div>
-      </div>
-
-      {/* 參考檔案選擇 */}
-      <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
-        <h3 className="text-md font-bold text-orange-400 mb-2">參考檔案</h3>
         <div className="flex gap-2">
           <input
             type="text"
-            value={referenceFilePath}
+            value={currentFilePath}
             readOnly
-            placeholder="請選擇參考語系檔案..."
+            placeholder="尚未設定或找不到當前語系檔案..."
             className="flex-1 px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 font-mono"
           />
           <button
-            onClick={handleSelectReference}
-            disabled={!currentFilePath}
-            className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
-              !currentFilePath
-                ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
-                : 'bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700'
-            }`}
+            onClick={async () => {
+              try {
+                const { SelectFile } = await import('../../wailsjs/go/main/App');
+                const path = await SelectFile('選擇當前語系檔案 (global.ini)');
+                if (path) {
+                  setCurrentFilePath(path);
+                  setMissingKeys([]);
+                  setEditedValues({});
+                  setSelectedKeys({});
+                  setSelectAll(false);
+                  setCompareStats(null);
+                  setMessage(null);
+                  setDuplicateRows([]);
+                  setDeletingLine(null);
+                }
+              } catch (e) {
+                console.error('選擇當前檔案失敗:', e);
+              }
+            }}
+            className={`px-4 py-2 rounded-lg text-sm font-medium border transition bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700`}
           >
             選擇檔案
           </button>
         </div>
       </div>
 
-      {/* 比對按鈕 */}
-      <div className="flex gap-2">
-        <button
-          onClick={handleCompare}
-          disabled={!currentFilePath || !referenceFilePath || isComparing}
-          className={`flex-1 px-4 py-3 rounded-lg font-medium border transition ${
-            (!currentFilePath || !referenceFilePath || isComparing)
-              ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
-              : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-500 hover:to-red-500 border-orange-900/50'
-          }`}
-        >
-          {isComparing ? '比對中...' : '開始比對'}
-        </button>
+      {/* 參考檔案選擇（重複鍵模式隱藏） */}
+      {compareMode !== 'duplicateKeys' && (
+        <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
+          <h3 className="text-md font-bold text-orange-400 mb-2">參考檔案</h3>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={referenceFilePath}
+              readOnly
+              placeholder="請選擇參考語系檔案..."
+              className="flex-1 px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 font-mono"
+            />
+            <button
+              onClick={handleSelectReference}
+              disabled={!currentFilePath}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                !currentFilePath
+                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                  : 'bg-gray-800 text-orange-300 border-orange-900/40 hover:bg-gray-700'
+              }`}
+            >
+              選擇檔案
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 比對選項與按鈕 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-400">比對模式：</span>
+          <div className="inline-flex rounded-lg overflow-hidden border border-gray-700">
+            <button
+              onClick={() => setCompareMode('missing')}
+              className={`px-3 py-1.5 ${compareMode === 'missing' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >
+              只比對缺失鍵
+            </button>
+            <button
+              onClick={() => setCompareMode('value')}
+              className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'value' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >
+              只比對值
+            </button>
+            <button
+              onClick={() => setCompareMode('duplicateKeys')}
+              className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'duplicateKeys' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >
+              比對重複鍵
+            </button>
+            <button
+              onClick={() => setCompareMode('searchValue')}
+              className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'searchValue' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >
+              比對指定值
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-2 items-center">
+          {compareMode === 'searchValue' && (
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="輸入搜尋條件（值或 Key，模糊比對）"
+              className="px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 w-64"
+            />
+          )}
+          <button
+            onClick={handleCompare}
+            disabled={!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing}
+            className={`px-4 py-3 rounded-lg font-medium border transition ${
+              (!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing)
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-500 hover:to-red-500 border-orange-900/50'
+            }`}
+          >
+            {isComparing ? '比對中...' : '開始比對'}
+          </button>
+        </div>
       </div>
 
       {/* 統計資訊 */}
@@ -283,24 +504,28 @@ export const LocaleCompare = () => {
               <div className="text-xs text-gray-400 mb-1">當前檔案項目數</div>
               <div className="text-xl font-bold text-blue-400">{compareStats.currentCount}</div>
             </div>
+            {compareMode !== 'duplicateKeys' && (
+              <div className="bg-black/40 border border-gray-700 rounded p-3">
+                <div className="text-xs text-gray-400 mb-1">參考檔案項目數</div>
+                <div className="text-xl font-bold text-green-400">{compareStats.referenceCount}</div>
+              </div>
+            )}
             <div className="bg-black/40 border border-gray-700 rounded p-3">
-              <div className="text-xs text-gray-400 mb-1">參考檔案項目數</div>
-              <div className="text-xl font-bold text-green-400">{compareStats.referenceCount}</div>
-            </div>
-            <div className="bg-black/40 border border-gray-700 rounded p-3">
-              <div className="text-xs text-gray-400 mb-1">缺少的項目數</div>
-              <div className="text-xl font-bold text-red-400">{missingKeys.length}</div>
+              <div className="text-xs text-gray-400 mb-1">{
+                compareMode === 'duplicateKeys' ? '重複列數' : (compareMode === 'value' ? '差異的項目數' : (compareMode === 'searchValue' ? '符合且不同的項目數' : '缺少的項目數'))
+              }</div>
+              <div className="text-xl font-bold text-red-400">{compareMode === 'duplicateKeys' ? duplicateRows.length : missingKeys.length}</div>
             </div>
           </div>
         </div>
       )}
 
-      {/* 缺少的項目列表 */}
-      {missingKeys.length > 0 && (
+      {/* 缺少/差異項目列表（重複鍵模式不顯示此段） */}
+      {compareMode !== 'duplicateKeys' && missingKeys.length > 0 && (
         <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-md font-bold text-orange-400">
-              缺少的項目 ({missingKeys.filter(item => selectedKeys[item.key]).length}/{missingKeys.length} 已選)
+              {compareMode === 'value' ? '差異的項目' : compareMode === 'searchValue' ? '符合且不同的項目' : '缺少的項目'} ({missingKeys.filter(item => selectedKeys[item.key]).length}/{missingKeys.length} 已選)
             </h3>
             <div className="flex gap-2">
               <button
@@ -311,14 +536,14 @@ export const LocaleCompare = () => {
               </button>
               <button
                 onClick={handleSave}
-                disabled={isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
+                disabled={compareMode === 'searchValue' || isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
                 className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
-                  (isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
+                  (compareMode === 'searchValue' || isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
                     ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
                     : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-500 hover:to-green-600 border-green-900/50'
                 }`}
               >
-                {isSaving ? '儲存中...' : '批次更新'}
+                {compareMode === 'searchValue' ? '僅檢視（不可更新）' : (isSaving ? '儲存中...' : '批次更新')}
               </button>
             </div>
           </div>
@@ -330,7 +555,9 @@ export const LocaleCompare = () => {
                   <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 w-12">選取</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '25%' }}>Key</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>參考檔案的值</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>新的值</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>
+                    {(compareMode === 'value' || compareMode === 'searchValue') ? '原檔案的值' : '新的值'}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -359,15 +586,95 @@ export const LocaleCompare = () => {
                       <textarea
                         value={editedValues[item.key] || ''}
                         onChange={(e) => setEditedValues({ ...editedValues, [item.key]: e.target.value })}
+                        readOnly={compareMode === 'value' || compareMode === 'searchValue'}
                         rows={3}
-                        placeholder="輸入翻譯內容..."
-                        className="w-full px-2 py-1 text-xs border rounded bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none font-mono resize-y"
+                        placeholder={(compareMode === 'value' || compareMode === 'searchValue') ? '' : '輸入翻譯內容...'}
+                        className={`w-full px-2 py-1 text-xs border rounded font-mono resize-y ${(compareMode === 'value' || compareMode === 'searchValue') ? 'bg-gray-900/50 text-gray-400 border-gray-700' : 'bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none'}`}
                       />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* 重複鍵列表 */}
+      {compareMode === 'duplicateKeys' && duplicateRows.length > 0 && (
+        <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-md font-bold text-orange-400">重複鍵（所有出現列）</h3>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 w-20">行數</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '30%' }}>Key</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '45%' }}>值（唯讀）</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 w-28">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {duplicateRows.map((row, index) => (
+                  <tr key={`${row.key}-${row.lineNumber}-${index}`} className="border-b border-gray-800 hover:bg-gray-900/30">
+                    <td className="px-3 py-3 align-top text-xs text-gray-400">{row.lineNumber}</td>
+                    <td className="px-3 py-3 align-top"><div className="text-xs text-orange-300 font-mono break-all">{row.key}</div></td>
+                    <td className="px-3 py-3 align-top">
+                      <textarea
+                        value={row.value}
+                        readOnly
+                        rows={2}
+                        className="w-full px-2 py-1 text-xs border rounded bg-gray-900/50 text-gray-400 border-gray-700 font-mono resize-none"
+                      />
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <button
+                        onClick={() => setConfirmDeleteRow(row)}
+                        disabled={deletingLine === row.lineNumber}
+                        className={`px-3 py-1.5 rounded text-xs font-medium border transition ${
+                          deletingLine === row.lineNumber
+                            ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                            : 'bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40'
+                        }`}
+                      >
+                        {deletingLine === row.lineNumber ? '刪除中...' : '刪除此列'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 確認刪除對話框 */}
+      {confirmDeleteRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmDeleteRow(null)} />
+          <div className="relative bg-gradient-to-br from-gray-900 to-black text-gray-200 px-6 py-5 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-orange-900/50 w-full max-w-md">
+            <h4 className="text-lg font-bold text-orange-400 mb-2">確認刪除</h4>
+            <div className="text-sm text-gray-300 mb-4">
+              確定要刪除第 <span className="text-orange-300 font-semibold">{confirmDeleteRow.lineNumber}</span> 行的紀錄嗎？
+              <div className="mt-1 text-xs text-gray-400">Key：<span className="text-orange-300 font-mono">{confirmDeleteRow.key}</span></div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteRow(null)}
+                className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => { const ln = confirmDeleteRow.lineNumber; setConfirmDeleteRow(null); handleDeleteDuplicateLine(ln); }}
+                className="px-4 py-2 text-sm rounded border bg-red-700/80 text-white border-red-900/60 hover:bg-red-700"
+              >
+                確定刪除
+              </button>
+            </div>
           </div>
         </div>
       )}
