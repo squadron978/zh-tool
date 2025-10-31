@@ -97,13 +97,13 @@ function App() {
                         下載，不要相信其他任何來源的執行檔案，以免被駭或資料遭竊。
                     </div>
                     <div className="text-sm text-gray-300 leading-relaxed mt-2">
-                        若您在使用過程中遇到問題，歡迎聯繫我們：
+                        若您在使用過程中遇到問題，歡迎至
                         <button
-                            onClick={() => BrowserOpenURL('mailto:squadron978@gmail.com')}
-                            className="ml-1 text-orange-400 hover:text-orange-300 underline underline-offset-2"
+                            onClick={() => BrowserOpenURL('https://discord.gg/qNNsXBuJqK')}
+                            className="mx-1 text-orange-400 hover:text-orange-300 underline underline-offset-2"
                         >
-                            squadron978@gmail.com
-                        </button>
+                            978中隊 Discord
+                        </button>聯繫我們。
                     </div>
                 </div>
             </div>
