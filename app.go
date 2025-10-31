@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+    "sort"
 	"strings"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -473,6 +474,9 @@ func (a *App) CompareINIFilesDetailed(currentPath, referencePath string) (Compar
 
 // UpdateINIFile 更新 INI 檔案，將新項目按照參考檔案的順序插入
 func (a *App) UpdateINIFile(targetPath, referencePath string, updates []INIKeyValue) error {
+    // 強制使用 Windows CRLF 與 UTF-8 BOM
+    eol, hasBOM := "\r\n", true
+
 	// 讀取參考檔案以獲取正確的順序
 	reference, err := a.ReadINIFile(referencePath)
 	if err != nil {
@@ -509,18 +513,11 @@ func (a *App) UpdateINIFile(targetPath, referencePath string, updates []INIKeyVa
 		}
 	}
 
-	// 寫回檔案
-	var lines []string
-	for _, item := range merged {
-		lines = append(lines, fmt.Sprintf("%s=%s", item.Key, item.Value))
-	}
-	content := strings.Join(lines, "\n") + "\n"
-
-	if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write file failed: %w", err)
-	}
-
-	return nil
+    // 寫回檔案（保留行尾與 BOM）
+    if err := writeINIWithFormat(targetPath, merged, eol, hasBOM); err != nil {
+        return err
+    }
+    return nil
 }
 
 // SelectFile 開啟檔案選擇對話框
@@ -620,17 +617,55 @@ func (a *App) ExportLocaleFile(scPath string, localeName string, destFile string
 
 // WriteINIFile 寫入 INI 檔案
 func (a *App) WriteINIFile(filePath string, items []INIKeyValue) error {
-	var lines []string
-	for _, item := range items {
-		lines = append(lines, fmt.Sprintf("%s=%s", item.Key, item.Value))
-	}
-	content := strings.Join(lines, "\n") + "\n"
+    // 強制使用 Windows CRLF 與 UTF-8 BOM
+    eol, hasBOM := "\r\n", true
+    if err := writeINIWithFormat(filePath, items, eol, hasBOM); err != nil {
+        return err
+    }
+    return nil
+}
 
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write file failed: %w", err)
-	}
+// detectFileFormat 嘗試從既有檔案偵測行尾(EOL)與是否含 UTF-8 BOM
+func detectFileFormat(filePath string) (string, bool) {
+    data, err := os.ReadFile(filePath)
+    if err != nil {
+        // 檔案不存在或讀取失敗時，採用 Windows CRLF 與 UTF-8 BOM
+        return "\r\n", true
+    }
+    hasBOM := len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF
+    // 判斷行尾：若含 \r\n 則視為 CRLF，否則預設為 LF
+    content := string(data)
+    eol := "\n"
+    if strings.Contains(content, "\r\n") {
+        eol = "\r\n"
+    }
+    return eol, hasBOM
+}
 
-	return nil
+// writeINIWithFormat 依指定行尾與 BOM 寫入 INI 檔案
+func writeINIWithFormat(filePath string, items []INIKeyValue, eol string, hasBOM bool) error {
+    // 依 Key 文字順序排序（不分大小寫）
+    sorted := make([]INIKeyValue, len(items))
+    copy(sorted, items)
+    sort.Slice(sorted, func(i, j int) bool {
+        ai := strings.ToLower(sorted[i].Key)
+        aj := strings.ToLower(sorted[j].Key)
+        return ai < aj
+    })
+
+    var lines []string
+    for _, item := range sorted {
+        lines = append(lines, fmt.Sprintf("%s=%s", item.Key, item.Value))
+    }
+    contentStr := strings.Join(lines, eol) + eol
+    content := []byte(contentStr)
+    if hasBOM {
+        content = append([]byte{0xEF, 0xBB, 0xBF}, content...)
+    }
+    if err := os.WriteFile(filePath, content, 0644); err != nil {
+        return fmt.Errorf("write file failed: %w", err)
+    }
+    return nil
 }
 
 // ImportLocaleFile 匯入語系檔案到指定的語系名稱資料夾
