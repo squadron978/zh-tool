@@ -30,6 +30,10 @@ export function ExportLocaleFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['ExportLocaleFile'](arg1, arg2, arg3);
 }
 
+export function ExportLocaleFileStripped(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportLocaleFileStripped'](arg1, arg2, arg3);
+}
+
 export function GetCurrentLocaleINIPath(arg1) {
   return window['go']['main']['App']['GetCurrentLocaleINIPath'](arg1);
 }
@@ -68,6 +72,10 @@ export function ResetToDefaultLanguage(arg1) {
 
 export function SaveFile(arg1, arg2) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2);
+}
+
+export function SaveTextFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveTextFile'](arg1, arg2, arg3);
 }
 
 export function SelectDirectory() {

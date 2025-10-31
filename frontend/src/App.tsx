@@ -68,14 +68,13 @@ function App() {
                         </button>
                         <button
                             onClick={() => setCurrentPage('shipSorting')}
-                            className="px-6 py-4 bg-gray-800 text-orange-300 rounded-lg hover:bg-gray-700 transition-all font-semibold text-sm border border-orange-900/50 text-left"
+							className="px-6 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-500 hover:to-red-500 transition-all font-semibold text-sm shadow-lg hover:shadow-orange-900/50 border border-orange-900/50 text-left"
                         >
                             <div className="text-lg">載具排序功能</div>
-                            <div className="text-xs text-gray-400">即將推出</div>
+							<div className="text-xs text-orange-100/80">整理載具、排序、匯入/匯出</div>
                         </button>
                     </div>
                 </div>
-                {/* 功能介紹已移除 */}
 
                 {/* 已移至「開始使用」頁面 */}
             </div>

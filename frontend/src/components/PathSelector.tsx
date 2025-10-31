@@ -459,11 +459,11 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                               setSwitching(true);
                               setSwitchMsg('');
                               try {
-                                const { SaveFile, ExportLocaleFile } = await import('../../wailsjs/go/main/App');
-                                const dest = await SaveFile('匯出 global.ini', `${locale}-global.ini`);
+                                const app: any = await import('../../wailsjs/go/main/App');
+                                const dest = await app.SaveFile('匯出 global.ini（已排除排序前綴）', `${locale}-global.ini`);
                                 if (dest) {
-                                  await ExportLocaleFile(scPath, locale, dest);
-                                  setSwitchMsg(`已匯出 ${locale} 的 global.ini 至：${dest}`);
+                                  await app.ExportLocaleFileStripped(scPath, locale, dest);
+                                  setSwitchMsg(`已匯出（已排除排序前綴）${locale} 的 global.ini 至：${dest}`);
                                 }
                               } catch (e: any) {
                                 setSwitchMsg(`匯出失敗：${e?.message || e}`);

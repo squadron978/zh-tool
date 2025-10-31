@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-    "sort"
+	"sort"
 	"strings"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -474,8 +474,8 @@ func (a *App) CompareINIFilesDetailed(currentPath, referencePath string) (Compar
 
 // UpdateINIFile 更新 INI 檔案，將新項目按照參考檔案的順序插入
 func (a *App) UpdateINIFile(targetPath, referencePath string, updates []INIKeyValue) error {
-    // 強制使用 Windows CRLF 與 UTF-8 BOM
-    eol, hasBOM := "\r\n", true
+	// 強制使用 Windows CRLF 與 UTF-8 BOM
+	eol, hasBOM := "\r\n", true
 
 	// 讀取參考檔案以獲取正確的順序
 	reference, err := a.ReadINIFile(referencePath)
@@ -513,11 +513,11 @@ func (a *App) UpdateINIFile(targetPath, referencePath string, updates []INIKeyVa
 		}
 	}
 
-    // 寫回檔案（保留行尾與 BOM）
-    if err := writeINIWithFormat(targetPath, merged, eol, hasBOM); err != nil {
-        return err
-    }
-    return nil
+	// 寫回檔案（保留行尾與 BOM）
+	if err := writeINIWithFormat(targetPath, merged, eol, hasBOM); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SelectFile 開啟檔案選擇對話框
@@ -580,6 +580,31 @@ func (a *App) SaveFile(title string, defaultFilename string) (string, error) {
 	return path, nil
 }
 
+// SaveTextFile 開啟另存為對話框並將文字內容寫入選擇的檔案
+func (a *App) SaveTextFile(title string, defaultFilename string, content string) (string, error) {
+	options := wailsRuntime.SaveDialogOptions{
+		Title:           title,
+		DefaultFilename: defaultFilename,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	}
+	path, err := wailsRuntime.SaveFileDialog(a.ctx, options)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		// 使用者取消
+		return "", nil
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("write file failed: %w", err)
+	}
+	return path, nil
+}
+
 // ExportLocaleFile 將指定語系的 global.ini 匯出到目標路徑
 func (a *App) ExportLocaleFile(scPath string, localeName string, destFile string) error {
 	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
@@ -615,57 +640,113 @@ func (a *App) ExportLocaleFile(scPath string, localeName string, destFile string
 	return nil
 }
 
+// ExportLocaleFileStripped 匯出指定語系的 global.ini，並針對含 vehicle_Name 的鍵移除值前方的 3 碼排序前綴（例如："001 ")
+func (a *App) ExportLocaleFileStripped(scPath string, localeName string, destFile string) error {
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
+		return fmt.Errorf("invalid Star Citizen path")
+	}
+	if strings.TrimSpace(localeName) == "" {
+		return fmt.Errorf("invalid locale name")
+	}
+	if strings.TrimSpace(destFile) == "" {
+		return fmt.Errorf("invalid destination path")
+	}
+
+	// 尋找來源檔案（LIVE / PTU / EPTU）
+	versionFolders := []string{"LIVE", "PTU", "EPTU"}
+	var src string
+	for _, vf := range versionFolders {
+		p := filepath.Join(scPath, vf, "data", "Localization", localeName, "global.ini")
+		if _, err := os.Stat(p); err == nil {
+			src = p
+			break
+		}
+	}
+	if src == "" {
+		return fmt.Errorf("global.ini not found for locale: %s", localeName)
+	}
+
+	// 讀取並解析
+	items, err := a.ReadINIFile(src)
+	if err != nil {
+		return fmt.Errorf("read source failed: %w", err)
+	}
+
+	// 清除 vehicle_Name 相關鍵的值前綴：開頭 3 碼數字+空白
+	cleaned := make([]INIKeyValue, 0, len(items))
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
+			v := it.Value
+			if len(v) >= 4 {
+				// 若符合 NNN<space> 開頭則移除
+				if v[0] >= '0' && v[0] <= '9' && v[1] >= '0' && v[1] <= '9' && v[2] >= '0' && v[2] <= '9' && (v[3] == ' ' || v[3] == '\t') {
+					v = v[4:]
+				}
+			}
+			cleaned = append(cleaned, INIKeyValue{Key: it.Key, Value: v})
+		} else {
+			cleaned = append(cleaned, it)
+		}
+	}
+
+	// 使用既定格式（Windows CRLF + UTF-8 BOM）寫出到目的檔案
+	if err := writeINIWithFormat(destFile, cleaned, "\r\n", true); err != nil {
+		return err
+	}
+	return nil
+}
+
 // WriteINIFile 寫入 INI 檔案
 func (a *App) WriteINIFile(filePath string, items []INIKeyValue) error {
-    // 強制使用 Windows CRLF 與 UTF-8 BOM
-    eol, hasBOM := "\r\n", true
-    if err := writeINIWithFormat(filePath, items, eol, hasBOM); err != nil {
-        return err
-    }
-    return nil
+	// 強制使用 Windows CRLF 與 UTF-8 BOM
+	eol, hasBOM := "\r\n", true
+	if err := writeINIWithFormat(filePath, items, eol, hasBOM); err != nil {
+		return err
+	}
+	return nil
 }
 
 // detectFileFormat 嘗試從既有檔案偵測行尾(EOL)與是否含 UTF-8 BOM
 func detectFileFormat(filePath string) (string, bool) {
-    data, err := os.ReadFile(filePath)
-    if err != nil {
-        // 檔案不存在或讀取失敗時，採用 Windows CRLF 與 UTF-8 BOM
-        return "\r\n", true
-    }
-    hasBOM := len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF
-    // 判斷行尾：若含 \r\n 則視為 CRLF，否則預設為 LF
-    content := string(data)
-    eol := "\n"
-    if strings.Contains(content, "\r\n") {
-        eol = "\r\n"
-    }
-    return eol, hasBOM
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		// 檔案不存在或讀取失敗時，採用 Windows CRLF 與 UTF-8 BOM
+		return "\r\n", true
+	}
+	hasBOM := len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF
+	// 判斷行尾：若含 \r\n 則視為 CRLF，否則預設為 LF
+	content := string(data)
+	eol := "\n"
+	if strings.Contains(content, "\r\n") {
+		eol = "\r\n"
+	}
+	return eol, hasBOM
 }
 
 // writeINIWithFormat 依指定行尾與 BOM 寫入 INI 檔案
 func writeINIWithFormat(filePath string, items []INIKeyValue, eol string, hasBOM bool) error {
-    // 依 Key 文字順序排序（不分大小寫）
-    sorted := make([]INIKeyValue, len(items))
-    copy(sorted, items)
-    sort.Slice(sorted, func(i, j int) bool {
-        ai := strings.ToLower(sorted[i].Key)
-        aj := strings.ToLower(sorted[j].Key)
-        return ai < aj
-    })
+	// 依 Key 文字順序排序（不分大小寫）
+	sorted := make([]INIKeyValue, len(items))
+	copy(sorted, items)
+	sort.Slice(sorted, func(i, j int) bool {
+		ai := strings.ToLower(sorted[i].Key)
+		aj := strings.ToLower(sorted[j].Key)
+		return ai < aj
+	})
 
-    var lines []string
-    for _, item := range sorted {
-        lines = append(lines, fmt.Sprintf("%s=%s", item.Key, item.Value))
-    }
-    contentStr := strings.Join(lines, eol) + eol
-    content := []byte(contentStr)
-    if hasBOM {
-        content = append([]byte{0xEF, 0xBB, 0xBF}, content...)
-    }
-    if err := os.WriteFile(filePath, content, 0644); err != nil {
-        return fmt.Errorf("write file failed: %w", err)
-    }
-    return nil
+	var lines []string
+	for _, item := range sorted {
+		lines = append(lines, fmt.Sprintf("%s=%s", item.Key, item.Value))
+	}
+	contentStr := strings.Join(lines, eol) + eol
+	content := []byte(contentStr)
+	if hasBOM {
+		content = append([]byte{0xEF, 0xBB, 0xBF}, content...)
+	}
+	if err := os.WriteFile(filePath, content, 0644); err != nil {
+		return fmt.Errorf("write file failed: %w", err)
+	}
+	return nil
 }
 
 // ImportLocaleFile 匯入語系檔案到指定的語系名稱資料夾

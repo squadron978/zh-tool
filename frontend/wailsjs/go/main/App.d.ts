@@ -16,6 +16,8 @@ export function DownloadAndInstallLocalization(arg1:string,arg2:string):Promise<
 
 export function ExportLocaleFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function ExportLocaleFileStripped(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function GetCurrentLocaleINIPath(arg1:string):Promise<string>;
 
 export function GetLocalizationPath(arg1:string):Promise<string>;
@@ -35,6 +37,8 @@ export function ReadINIFile(arg1:string):Promise<Array<main.INIKeyValue>>;
 export function ResetToDefaultLanguage(arg1:string):Promise<void>;
 
 export function SaveFile(arg1:string,arg2:string):Promise<string>;
+
+export function SaveTextFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SelectDirectory():Promise<string>;
 
