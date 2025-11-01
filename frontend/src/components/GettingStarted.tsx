@@ -82,6 +82,12 @@ export const GettingStarted = () => {
       log('設定 system.cfg 語系為 chinese_(traditional)...');
       await SetUserLanguage(scPath, 'chinese_(traditional)');
       log('system.cfg 設定完成');
+      // 若存在 active.json，安裝後自動套用排序到 chinese_(traditional)
+      try {
+        const app: any = await import('../../wailsjs/go/main/App');
+        await app.ApplyActiveVehicleOrderToLocale(scPath, 'chinese_(traditional)');
+        log('已套用 active.json 排序至 chinese_(traditional)');
+      } catch {}
       setInstallMsg({ type: 'success', text: `已完成${hasChineseLocale ? '更新' : '安裝'}：${saved}` });
       // 重新檢查語系狀態
       log('重新偵測語系列表...');

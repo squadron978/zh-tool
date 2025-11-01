@@ -36,6 +36,12 @@ export const ShipSorting = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [tab, setTab] = useState<'sort' | 'profiles'>('sort');
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [saveAsName, setSaveAsName] = useState('');
+  const [savedNames, setSavedNames] = useState<string[]>([]);
+  const [isBusyProfiles, setIsBusyProfiles] = useState(false);
+  const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null);
 
   // 進入頁面時若尚未設定路徑，嘗試自動偵測並驗證
   useEffect(() => {
@@ -73,6 +79,11 @@ export const ShipSorting = () => {
       setMessage(null);
       try {
         const { GetUserLanguage, GetCurrentLocaleINIPath, ReadINIFile } = await import('../../wailsjs/go/main/App');
+        // 確保 Sort 目錄存在
+        try {
+          const app: any = await import('../../wailsjs/go/main/App');
+          await app.EnsureSortDirs(scPath);
+        } catch {}
         const localeName = await GetUserLanguage(scPath);
         if (!localeName) {
           setCurrentLocale('');
@@ -128,22 +139,52 @@ export const ShipSorting = () => {
         const groupList = Array.from(baseMap.values());
         setGroups(groupList);
 
-        // 初始已排序清單：若值含有 3 碼前綴，依數字升冪
-        const detected = groupList
-          .map(g => {
-            const candidate = g.longValue ?? g.shortValue ?? '';
-            const origRaw = (vehicleItems.find(v => v.key === (g.longKey || g.shortKey))?.value) || '';
-            const m = origRaw.match(NUM_PREFIX_REGEX);
-            return {
-              baseKey: g.baseKey,
-              num: m ? parseInt(m[1], 10) : null,
-            };
-          })
-          .filter(x => x.num != null)
-          .sort((a, b) => (a.num! - b.num!))
-          .map(x => x.baseKey);
-
-        setSortedBaseKeys(detected);
+        // 優先以 active.json（若存在）決定排序，否則退回前綴偵測
+        try {
+          const app: any = await import('../../wailsjs/go/main/App');
+          const activeKeys: string[] = await app.GetActiveVehicleOrder(scPath);
+          if (Array.isArray(activeKeys) && activeKeys.length > 0) {
+            const exist = new Set(groupList.map(g => g.baseKey));
+            const filtered = activeKeys.filter((k) => exist.has(k));
+            if (filtered.length > 0) {
+              setSortedBaseKeys(filtered);
+            } else {
+              // fallback to prefix
+              const detected = groupList
+                .map(g => {
+                  const origRaw = (vehicleItems.find(v => v.key === (g.longKey || g.shortKey))?.value) || '';
+                  const m = origRaw.match(NUM_PREFIX_REGEX);
+                  return { baseKey: g.baseKey, num: m ? parseInt(m[1], 10) : null };
+                })
+                .filter(x => x.num != null)
+                .sort((a, b) => (a.num! - b.num!))
+                .map(x => x.baseKey);
+              setSortedBaseKeys(detected);
+            }
+          } else {
+            const detected = groupList
+              .map(g => {
+                const origRaw = (vehicleItems.find(v => v.key === (g.longKey || g.shortKey))?.value) || '';
+                const m = origRaw.match(NUM_PREFIX_REGEX);
+                return { baseKey: g.baseKey, num: m ? parseInt(m[1], 10) : null };
+              })
+              .filter(x => x.num != null)
+              .sort((a, b) => (a.num! - b.num!))
+              .map(x => x.baseKey);
+            setSortedBaseKeys(detected);
+          }
+        } catch {
+          const detected = groupList
+            .map(g => {
+              const origRaw = (vehicleItems.find(v => v.key === (g.longKey || g.shortKey))?.value) || '';
+              const m = origRaw.match(NUM_PREFIX_REGEX);
+              return { baseKey: g.baseKey, num: m ? parseInt(m[1], 10) : null };
+            })
+            .filter(x => x.num != null)
+            .sort((a, b) => (a.num! - b.num!))
+            .map(x => x.baseKey);
+          setSortedBaseKeys(detected);
+        }
         setMessage({ type: 'success', text: `已載入 ${groupList.length} 個載具名稱` });
       } catch (e: any) {
         setMessage({ type: 'error', text: `載入失敗：${e?.message || e}` });
@@ -157,6 +198,17 @@ export const ShipSorting = () => {
     };
     void init();
   }, [scPath, isPathValid]);
+
+  // 讀取 save 清單
+  const refreshSavedNames = async () => {
+    if (!isPathValid || !scPath) { setSavedNames([]); return; }
+    try {
+      const app: any = await import('../../wailsjs/go/main/App');
+      const names = await app.ListVehicleOrderSaves(scPath);
+      setSavedNames(Array.isArray(names) ? names : []);
+    } catch { setSavedNames([]); }
+  };
+  useEffect(() => { void refreshSavedNames(); }, [scPath, isPathValid]);
 
   // 衍生：未排序與已排序
   const groupedByBase = useMemo(() => {
@@ -188,7 +240,7 @@ export const ShipSorting = () => {
 
   const handleAddToSorted = (baseKey: string) => {
     if (sortedBaseKeys.includes(baseKey)) return;
-    setSortedBaseKeys(prev => [...prev, baseKey]);
+    setSortedBaseKeys(prev => [baseKey, ...prev]);
   };
 
   const handleRemoveFromSorted = (baseKey: string) => {
@@ -243,11 +295,33 @@ export const ShipSorting = () => {
       const { WriteINIFile } = await import('../../wailsjs/go/main/App');
       await WriteINIFile(currentFilePath, newItems);
       setAllItems(newItems);
+      // 同步寫入 active.json（第一次儲存時會建立）
+      try { const app: any = await import('../../wailsjs/go/main/App'); await app.SaveVehicleOrderActive(scPath, sortedBaseKeys); } catch {}
       setMessage({ type: 'success', text: '已儲存排序至語系檔。' });
     } catch (e: any) {
       setMessage({ type: 'error', text: `儲存失敗：${e?.message || e}` });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // 另存新檔（存入 Sort/save）
+  const handleSaveAs = async () => {
+    const name = saveAsName.trim();
+    if (!name) return;
+    setIsBusyProfiles(true);
+    setMessage(null);
+    try {
+      const app: any = await import('../../wailsjs/go/main/App');
+      await app.SaveVehicleOrderAs(scPath, name, sortedBaseKeys);
+      setSaveAsOpen(false);
+      setSaveAsName('');
+      await refreshSavedNames();
+      setMessage({ type: 'success', text: `已另存為 ${name}.json` });
+    } catch (e: any) {
+      setMessage({ type: 'error', text: `另存失敗：${e?.message || e}` });
+    } finally {
+      setIsBusyProfiles(false);
     }
   };
 
@@ -340,7 +414,8 @@ export const ShipSorting = () => {
         </div>
       )}
 
-      {/* 當前檔案資訊與動作 */}
+      {/* 當前檔案資訊與動作 */
+      }
       <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4 mb-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1">
@@ -358,18 +433,6 @@ export const ShipSorting = () => {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={handleImportFile}
-              className="px-3 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
-            >
-              匯入檔案
-            </button>
-            <button
-              onClick={handleExportFile}
-              className="px-3 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
-            >
-              匯出檔案
-            </button>
-            <button
               onClick={handleSave}
               disabled={isSaving || isLoading || !currentFilePath}
               className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
@@ -380,11 +443,28 @@ export const ShipSorting = () => {
             >
               {isSaving ? '儲存中...' : '💾 儲存'}
             </button>
+            <button
+              onClick={() => setSaveAsOpen(true)}
+              disabled={isSaving || isLoading || !currentFilePath}
+              className={`px-3 py-2 text-sm rounded border ${
+                (isSaving || isLoading || !currentFilePath)
+                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                  : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+              }`}
+            >
+              另存新檔
+            </button>
           </div>
         </div>
       </div>
 
-      {/* 兩欄清單 */}
+      {/* 子頁籤 */}
+      <div className="mb-3 flex items-center gap-2 border-b border-orange-900/40">
+        <button onClick={() => setTab('sort')} className={`px-3 py-2 text-sm rounded-t ${tab==='sort'?'bg-orange-900/30 text-orange-300':'text-gray-300 hover:text-white'}`}>排序</button>
+        <button onClick={() => setTab('profiles')} className={`px-3 py-2 text-sm rounded-t ${tab==='profiles'?'bg-orange-900/30 text-orange-300':'text-gray-300 hover:text-white'}`}>設定檔管理</button>
+      </div>
+
+      {tab === 'sort' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* 未排序 */}
         <div className="bg-black/30 border border-gray-800 rounded-lg p-4">
@@ -417,7 +497,7 @@ export const ShipSorting = () => {
               <div className="text-xs text-gray-500 text-right w-20">{unsortedFiltered.length}/{unsortedGroups.length}</div>
             </div>
           </div>
-          <div className="max-h-[520px] overflow-auto divide-y divide-gray-800">
+          <div className="max-h-[490px] overflow-auto divide-y divide-gray-800">
             {unsortedFiltered.map(g => (
               <button
                 key={g.baseKey}
@@ -441,7 +521,7 @@ export const ShipSorting = () => {
             <h3 className="text-md font-bold text-gray-200">已排序</h3>
             <div className="text-xs text-gray-500">{sortedGroups.length} 項</div>
           </div>
-          <div className="max-h-[520px] overflow-auto divide-y divide-gray-800">
+          <div className="max-h-[490px] overflow-auto divide-y divide-gray-800">
             {sortedGroups.map((g, idx) => (
               <div
                 key={g.baseKey}
@@ -470,7 +550,163 @@ export const ShipSorting = () => {
           </div>
         </div>
       </div>
+      )}
+
+      {tab === 'profiles' && (
+        <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-md font-bold text-orange-400">設定檔管理</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  setIsBusyProfiles(true);
+                  try {
+                    const app: any = await import('../../wailsjs/go/main/App');
+                    const path = await app.SelectJSONFile('選擇載具排序 JSON 檔');
+                    if (path) {
+                      await app.ImportVehicleOrderFile(scPath, path);
+                      await refreshSavedNames();
+                      setMessage({ type: 'success', text: '已匯入至 save 資料夾' });
+                    }
+                  } catch (e: any) {
+                    setMessage({ type: 'error', text: `匯入失敗：${e?.message || e}` });
+                  } finally { setIsBusyProfiles(false); }
+                }}
+                disabled={isBusyProfiles || !isPathValid}
+                className={`px-3 py-2 text-sm rounded border ${
+                  (isBusyProfiles || !isPathValid) ? 'bg-gray-800 text-gray-500 border-gray-700' : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+                }`}
+              >
+                匯入設定檔
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400">檔名</th>
+                  <th className="px-3 py-2 text-center text-xs font-semibold text-gray-400">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {savedNames.length === 0 && (
+                  <tr><td colSpan={2} className="px-3 py-4 text-center text-sm text-gray-500">尚無已儲存的設定檔</td></tr>
+                )}
+                {savedNames.map((name) => (
+                  <tr key={name} className="border-b border-gray-800 hover:bg-gray-900/30">
+                    <td className="px-3 py-3 text-sm text-gray-300 font-mono">{name}.json</td>
+                    <td className="px-3 py-3 text-center flex items-center gap-2 justify-center">
+                      <button
+                        onClick={async () => {
+                          setIsBusyProfiles(true);
+                          try {
+                            const app: any = await import('../../wailsjs/go/main/App');
+                            const baseKeys: string[] = await app.SetActiveVehicleOrderByName(scPath, name);
+                            // 套用到目前排序清單（過濾不存在的 baseKey）
+                            const exist = new Set(groups.map(g => g.baseKey));
+                            const filtered = (baseKeys || []).filter(k => exist.has(k));
+                            setSortedBaseKeys(filtered);
+                            setMessage({ type: 'success', text: `已套用設定檔：${name}.json` });
+                          } catch (e: any) {
+                            setMessage({ type: 'error', text: `套用失敗：${e?.message || e}` });
+                          } finally { setIsBusyProfiles(false); }
+                        }}
+                        disabled={isBusyProfiles}
+                        className={`px-3 py-1 rounded border text-xs ${isBusyProfiles ? 'bg-gray-800 text-gray-500 border-gray-700' : 'bg-orange-600 text-white border-orange-500 hover:bg-orange-500'}`}
+                      >
+                        套用
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setIsBusyProfiles(true);
+                          try {
+                            const app: any = await import('../../wailsjs/go/main/App');
+                            const dest = await app.SaveFile('匯出設定檔', `${name}.json`);
+                            if (dest) {
+                              await app.ExportVehicleOrderFile(scPath, name, dest);
+                              setMessage({ type: 'success', text: `已匯出至：${dest}` });
+                            }
+                          } catch (e: any) {
+                            setMessage({ type: 'error', text: `匯出失敗：${e?.message || e}` });
+                          } finally { setIsBusyProfiles(false); }
+                        }}
+                        disabled={isBusyProfiles}
+                        className={`px-3 py-1 rounded border text-xs ${isBusyProfiles ? 'bg-gray-800 text-gray-500 border-gray-700' : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'}`}
+                      >
+                        匯出
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteName(name)}
+                        disabled={isBusyProfiles}
+                        className={`px-3 py-1 rounded border text-xs ${isBusyProfiles ? 'bg-gray-800 text-gray-500 border-gray-700' : 'bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40'}`}
+                      >
+                        刪除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 確認刪除對話框 */}
+      {confirmDeleteName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmDeleteName(null)} />
+          <div className="relative bg-gradient-to-br from-gray-900 to-black text-gray-200 px-6 py-5 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-orange-900/50 w-full max-w-md">
+            <h4 className="text-lg font-bold text-orange-400 mb-2">確認刪除</h4>
+            <div className="text-sm text-gray-300 mb-3">確定要刪除設定檔 <span className="text-orange-300 font-mono">{confirmDeleteName}.json</span> 嗎？</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmDeleteName(null)} className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700">取消</button>
+              <button
+                onClick={async () => {
+                  const name = confirmDeleteName;
+                  setConfirmDeleteName(null);
+                  setIsBusyProfiles(true);
+                  try {
+                    const app: any = await import('../../wailsjs/go/main/App');
+                    await app.DeleteVehicleOrderSave(scPath, name);
+                    await refreshSavedNames();
+                    setMessage({ type: 'success', text: `已刪除：${name}.json` });
+                  } catch (e: any) {
+                    setMessage({ type: 'error', text: `刪除失敗：${e?.message || e}` });
+                  } finally { setIsBusyProfiles(false); }
+                }}
+                className="px-4 py-2 text-sm rounded border bg-red-700/80 text-white border-red-900/60 hover:bg-red-700"
+              >
+                確定刪除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 另存新檔對話框 */}
+      {saveAsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setSaveAsOpen(false)} />
+          <div className="relative bg-gradient-to-br from-gray-900 to-black text-gray-200 px-6 py-5 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-orange-900/50 w-full max-w-md">
+            <h4 className="text-lg font-bold text-orange-400 mb-2">另存新檔</h4>
+            <div className="text-sm text-gray-300 mb-3">輸入要儲存的檔名（將儲存於 Sort/save 資料夾）。</div>
+            <input
+              type="text"
+              value={saveAsName}
+              onChange={(e) => setSaveAsName(e.target.value)}
+              placeholder="例如：我的清單A"
+              className="w-full px-3 py-2 text-sm border rounded bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 focus:border-orange-500 focus:outline-none"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setSaveAsOpen(false)} className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700">取消</button>
+              <button onClick={handleSaveAs} disabled={!saveAsName.trim() || isBusyProfiles} className={`px-4 py-2 text-sm rounded border ${(!saveAsName.trim() || isBusyProfiles) ? 'bg-gray-800 text-gray-500 border-gray-700' : 'bg-orange-600 text-white border-orange-500 hover:bg-orange-500'}`}>儲存</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
 

@@ -38,6 +38,7 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
   const [importLocaleName, setImportLocaleName] = useState('');
   const [importFilePath, setImportFilePath] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [confirmDeleteLocale, setConfirmDeleteLocale] = useState<string | null>(null);
 
   // 掛載時自動偵測一次（若尚未有路徑且未在偵測中）
   useEffect(() => {
@@ -431,11 +432,23 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                                 setSwitching(true);
                                 setSwitchMsg('');
                                 try {
+                                  // 先將使用中的語系（若有）移除 active.json 排序前綴
+                                  try {
+                                    const app: any = await import('../../wailsjs/go/main/App');
+                                    if (currentUserLanguage) {
+                                      await app.StripActiveVehicleOrderFromLocale(scPath, currentUserLanguage);
+                                    }
+                                  } catch {}
                                   const p = await SetUserLanguage(scPath, locale);
                                   setSwitchMsg(`已切換至 ${locale}（寫入：${p}）`);
                                   try {
                                     const lang = await (await import('../../wailsjs/go/main/App')).GetUserLanguage(scPath);
                                     setCurrentUserLanguage(lang || '');
+                                  } catch {}
+                                  // 套用 active.json 排序到新語系
+                                  try {
+                                    const app: any = await import('../../wailsjs/go/main/App');
+                                    await app.ApplyActiveVehicleOrderToLocale(scPath, locale);
                                   } catch {}
                                 } catch (e: any) {
                                   setSwitchMsg(`切換失敗：${e?.message || e}`);
@@ -480,6 +493,24 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                           >
                             匯出
                           </button>
+                  <button
+                    onClick={() => {
+                      if (currentUserLanguage === locale) {
+                        setSwitchMsg('使用中的語系不可刪除');
+                        return;
+                      }
+                      setConfirmDeleteLocale(locale);
+                    }}
+                    disabled={switching || currentUserLanguage === locale}
+                    title={currentUserLanguage === locale ? '使用中的語系不可刪除' : ''}
+                    className={`px-3 py-1 rounded border text-xs ${
+                      (switching || currentUserLanguage === locale)
+                        ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                        : 'bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40'
+                    }`}
+                  >
+                    刪除
+                  </button>
                         </td>
                       </tr>
                     ))}
@@ -523,6 +554,52 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                 {switchMsg}
               </div>
             )}
+          </div>
+        )}
+        {/* 確認刪除語系對話框 */}
+        {confirmDeleteLocale && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmDeleteLocale(null)} />
+            <div className="relative bg-gradient-to-br from-gray-900 to-black text-gray-200 px-6 py-5 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-orange-900/50 w-full max-w-md">
+              <h4 className="text-lg font-bold text-orange-400 mb-2">確認刪除語系</h4>
+              <div className="text-sm text-gray-300 mb-3">確定要刪除語系 <span className="text-orange-300 font-mono">{confirmDeleteLocale}</span> 的資料夾嗎？此動作將移除其 `global.ini` 及相關檔案。</div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setConfirmDeleteLocale(null)} className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700">取消</button>
+                <button
+                  onClick={async () => {
+                    const target = confirmDeleteLocale;
+                    if (currentUserLanguage === target) {
+                      setConfirmDeleteLocale(null);
+                      setSwitchMsg('使用中的語系不可刪除');
+                      return;
+                    }
+                    setConfirmDeleteLocale(null);
+                    setSwitching(true);
+                    setSwitchMsg('');
+                    try {
+                      const app: any = await import('../../wailsjs/go/main/App');
+                      await app.DeleteLocalization(scPath, target);
+                      // 重新載入語系列表
+                      const locales = await app.ListInstalledLocalizations(scPath);
+                      setInstalledLocales(Array.isArray(locales) ? locales : []);
+                      // 若當前使用的是被刪除的語系，嘗試讀取目前 system.cfg；若已不在列表，顯示未使用
+                      try {
+                        const lang = await app.GetUserLanguage(scPath);
+                        setCurrentUserLanguage(lang || '');
+                      } catch {}
+                      setSwitchMsg(`已刪除語系：${target}`);
+                    } catch (e: any) {
+                      setSwitchMsg(`刪除失敗：${e?.message || e}`);
+                    } finally {
+                      setSwitching(false);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm rounded border bg-red-700/80 text-white border-red-900/60 hover:bg-red-700"
+                >
+                  確定刪除
+                </button>
+              </div>
+            </div>
           </div>
         )}
     </div>

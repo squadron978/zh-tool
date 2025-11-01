@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -544,6 +545,22 @@ func (a *App) SelectFile(title string) (string, error) {
 	return path, nil
 }
 
+// SelectJSONFile 開啟 JSON 檔案選擇對話框
+func (a *App) SelectJSONFile(title string) (string, error) {
+	options := wailsRuntime.OpenDialogOptions{
+		Title: title,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	}
+	path, err := wailsRuntime.OpenFileDialog(a.ctx, options)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // GetCurrentLocaleINIPath 獲取當前正在使用的語系檔案路徑
 func (a *App) GetCurrentLocaleINIPath(scPath string) (string, error) {
 	currentLocale := a.GetUserLanguage(scPath)
@@ -666,32 +683,437 @@ func (a *App) ExportLocaleFileStripped(scPath string, localeName string, destFil
 		return fmt.Errorf("global.ini not found for locale: %s", localeName)
 	}
 
-	// 讀取並解析
+	// 讀取並解析來源 INI
 	items, err := a.ReadINIFile(src)
 	if err != nil {
 		return fmt.Errorf("read source failed: %w", err)
 	}
 
-	// 清除 vehicle_Name 相關鍵的值前綴：開頭 3 碼數字+空白
+	// 從 Sort/active.json 取得目前使用中的 baseKeys 清單
+	activeSet := map[string]struct{}{}
+	{
+		baseSort := a.GetSortBasePath(scPath)
+		if baseSort != "" {
+			activePath := filepath.Join(baseSort, "active.json")
+			if data, err := os.ReadFile(activePath); err == nil {
+				var vo VehicleOrder
+				if json.Unmarshal(data, &vo) == nil && vo.Type == "vehicle_order" && vo.Version > 0 && len(vo.BaseKeys) > 0 {
+					for _, k := range vo.BaseKeys {
+						activeSet[k] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
+	// 只有 baseKey 在 active.json 的 vehicle_Name 項目才移除排序前綴
 	cleaned := make([]INIKeyValue, 0, len(items))
 	for _, it := range items {
 		if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
-			v := it.Value
-			if len(v) >= 4 {
-				// 若符合 NNN<space> 開頭則移除
-				if v[0] >= '0' && v[0] <= '9' && v[1] >= '0' && v[1] <= '9' && v[2] >= '0' && v[2] <= '9' && (v[3] == ' ' || v[3] == '\t') {
-					v = v[4:]
-				}
+			// 計算 baseKey 與前端一致的規則：_short,p -> ",P"；_short -> 去除後綴；其他維持
+			keyLower := strings.ToLower(it.Key)
+			baseKey := it.Key
+			if strings.HasSuffix(keyLower, "_short,p") {
+				baseKey = it.Key[:len(it.Key)-len("_short,p")] + ",P"
+			} else if strings.HasSuffix(keyLower, "_short") {
+				baseKey = it.Key[:len(it.Key)-len("_short")]
 			}
-			cleaned = append(cleaned, INIKeyValue{Key: it.Key, Value: v})
-		} else {
-			cleaned = append(cleaned, it)
+
+			if _, ok := activeSet[baseKey]; ok {
+				v := it.Value
+				if len(v) >= 4 {
+					if v[0] >= '0' && v[0] <= '9' && v[1] >= '0' && v[1] <= '9' && v[2] >= '0' && v[2] <= '9' && (v[3] == ' ' || v[3] == '\t') {
+						v = v[4:]
+					}
+				}
+				cleaned = append(cleaned, INIKeyValue{Key: it.Key, Value: v})
+				continue
+			}
 		}
+		cleaned = append(cleaned, it)
 	}
 
 	// 使用既定格式（Windows CRLF + UTF-8 BOM）寫出到目的檔案
 	if err := writeINIWithFormat(destFile, cleaned, "\r\n", true); err != nil {
 		return err
+	}
+	return nil
+}
+
+// GetSortBasePath 回傳與 Localization 同層的 Sort 目錄路徑（優先回傳存在的版本目錄）
+func (a *App) GetSortBasePath(scPath string) string {
+	if scPath == "" {
+		return ""
+	}
+	versionFolders := []string{"LIVE", "PTU", "EPTU"}
+	for _, vf := range versionFolders {
+		base := filepath.Join(scPath, vf)
+		if _, err := os.Stat(base); err == nil {
+			return filepath.Join(base, "data", "Sort")
+		}
+	}
+	return filepath.Join(scPath, "LIVE", "data", "Sort")
+}
+
+// EnsureSortDirs 確保 Sort 與 Sort/save 目錄存在
+func (a *App) EnsureSortDirs(scPath string) (string, string, error) {
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
+		return "", "", fmt.Errorf("invalid Star Citizen path")
+	}
+	base := a.GetSortBasePath(scPath)
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", "", err
+	}
+	save := filepath.Join(base, "save")
+	if err := os.MkdirAll(save, 0755); err != nil {
+		return "", "", err
+	}
+	return base, save, nil
+}
+
+type VehicleOrder struct {
+	Type     string   `json:"type"`
+	Version  int      `json:"version"`
+	BaseKeys []string `json:"baseKeys"`
+}
+
+// SaveVehicleOrderActive 寫入 active.json（不建立時機由前端控制）
+func (a *App) SaveVehicleOrderActive(scPath string, baseKeys []string) (string, error) {
+	base, _, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return "", err
+	}
+	vo := VehicleOrder{Type: "vehicle_order", Version: 1, BaseKeys: baseKeys}
+	data, err := json.MarshalIndent(vo, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	dest := filepath.Join(base, "active.json")
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// SaveVehicleOrderAs 另存新檔到 save 目錄，回傳完整路徑
+func (a *App) SaveVehicleOrderAs(scPath string, name string, baseKeys []string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	// 簡單過濾檔名
+	safe := strings.TrimSpace(name)
+	safe = strings.ReplaceAll(safe, "\\", "_")
+	safe = strings.ReplaceAll(safe, "/", "_")
+	safe = strings.ReplaceAll(safe, ":", "_")
+	safe = strings.ReplaceAll(safe, "*", "_")
+	safe = strings.ReplaceAll(safe, "?", "_")
+	safe = strings.ReplaceAll(safe, "\"", "_")
+	safe = strings.ReplaceAll(safe, "<", "_")
+	safe = strings.ReplaceAll(safe, ">", "_")
+	safe = strings.ReplaceAll(safe, "|", "_")
+
+	_, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return "", err
+	}
+	dest := filepath.Join(saveDir, safe+".json")
+	vo := VehicleOrder{Type: "vehicle_order", Version: 1, BaseKeys: baseKeys}
+	data, err := json.MarshalIndent(vo, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// GetActiveVehicleOrder 讀取 Sort/active.json 並回傳 BaseKeys（若不存在則回傳空陣列）
+func (a *App) GetActiveVehicleOrder(scPath string) ([]string, error) {
+	base, _, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return nil, err
+	}
+	active := filepath.Join(base, "active.json")
+	data, err := os.ReadFile(active)
+	if err != nil {
+		// 不存在或讀取失敗即回傳空
+		return []string{}, nil
+	}
+	var vo VehicleOrder
+	if err := json.Unmarshal(data, &vo); err != nil {
+		return []string{}, nil
+	}
+	if vo.Type != "vehicle_order" || vo.Version <= 0 {
+		return []string{}, nil
+	}
+	return vo.BaseKeys, nil
+}
+
+// getLocaleINIPath 找出特定語系名稱的 global.ini 路徑
+func (a *App) getLocaleINIPath(scPath, localeName string) (string, error) {
+	versionFolders := []string{"LIVE", "PTU", "EPTU"}
+	for _, vf := range versionFolders {
+		p := filepath.Join(scPath, vf, "data", "Localization", localeName, "global.ini")
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("global.ini not found for locale: %s", localeName)
+}
+
+// makeBaseKey 與前端一致：_short,p -> ,P；_short -> 去除；其他維持
+func makeBaseKey(key string) string {
+	kl := strings.ToLower(key)
+	if strings.HasSuffix(kl, "_short,p") {
+		return key[:len(key)-len("_short,p")] + ",P"
+	}
+	if strings.HasSuffix(kl, "_short") {
+		return key[:len(key)-len("_short")]
+	}
+	return key
+}
+
+// stripPrefix 若值為 NNN␠ 開頭則去除
+func stripPrefix(val string) string {
+	if len(val) >= 4 && val[0] >= '0' && val[0] <= '9' && val[1] >= '0' && val[1] <= '9' && val[2] >= '0' && val[2] <= '9' && (val[3] == ' ' || val[3] == '\t') {
+		return val[4:]
+	}
+	return val
+}
+
+// ApplyActiveVehicleOrderToLocale 讀取 active.json，將排序套用到指定語系檔（存在於清單者加 NNN 前綴，其他移除）
+func (a *App) ApplyActiveVehicleOrderToLocale(scPath, localeName string) error {
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) || strings.TrimSpace(localeName) == "" {
+		return fmt.Errorf("invalid params")
+	}
+	// 取得 active baseKeys
+	baseKeys, _ := a.GetActiveVehicleOrder(scPath)
+	if len(baseKeys) == 0 {
+		// 無排序即不動
+		return nil
+	}
+	iniPath, err := a.getLocaleINIPath(scPath, localeName)
+	if err != nil {
+		return err
+	}
+	items, err := a.ReadINIFile(iniPath)
+	if err != nil {
+		return err
+	}
+
+	orderMap := map[string]int{}
+	for i, k := range baseKeys {
+		orderMap[k] = i + 1
+	}
+
+	newItems := make([]INIKeyValue, 0, len(items))
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
+			base := makeBaseKey(it.Key)
+			clean := stripPrefix(it.Value)
+			if ord, ok := orderMap[base]; ok {
+				// 加前綴
+				v := fmt.Sprintf("%03d %s", ord, clean)
+				newItems = append(newItems, INIKeyValue{Key: it.Key, Value: v})
+				continue
+			}
+			// 其他移除前綴
+			newItems = append(newItems, INIKeyValue{Key: it.Key, Value: clean})
+		} else {
+			newItems = append(newItems, it)
+		}
+	}
+	return writeINIWithFormat(iniPath, newItems, "\r\n", true)
+}
+
+// StripActiveVehicleOrderFromLocale 讀取 active.json，僅對其中 baseKeys 的載具移除前綴
+func (a *App) StripActiveVehicleOrderFromLocale(scPath, localeName string) error {
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) || strings.TrimSpace(localeName) == "" {
+		return fmt.Errorf("invalid params")
+	}
+	baseKeys, _ := a.GetActiveVehicleOrder(scPath)
+	if len(baseKeys) == 0 {
+		return nil
+	}
+	iniPath, err := a.getLocaleINIPath(scPath, localeName)
+	if err != nil {
+		return err
+	}
+	items, err := a.ReadINIFile(iniPath)
+	if err != nil {
+		return err
+	}
+	set := map[string]struct{}{}
+	for _, k := range baseKeys {
+		set[k] = struct{}{}
+	}
+
+	newItems := make([]INIKeyValue, 0, len(items))
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
+			base := makeBaseKey(it.Key)
+			if _, ok := set[base]; ok {
+				newItems = append(newItems, INIKeyValue{Key: it.Key, Value: stripPrefix(it.Value)})
+				continue
+			}
+		}
+		newItems = append(newItems, it)
+	}
+	return writeINIWithFormat(iniPath, newItems, "\r\n", true)
+}
+
+// ListVehicleOrderSaves 列出 save 目錄下的檔名（不含副檔名）
+func (a *App) ListVehicleOrderSaves(scPath string) ([]string, error) {
+	_, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(saveDir)
+	if err != nil {
+		return []string{}, nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".json") {
+			names = append(names, strings.TrimSuffix(name, filepath.Ext(name)))
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// ExportVehicleOrderFile 將 save/<name>.json 匯出到指定路徑
+func (a *App) ExportVehicleOrderFile(scPath string, name string, destFile string) error {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(destFile) == "" {
+		return fmt.Errorf("invalid params")
+	}
+	_, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return err
+	}
+	src := filepath.Join(saveDir, name+".json")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(destFile, data, 0644); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ImportVehicleOrderFile 複製外部 JSON 到 save 目錄（使用原檔名）
+func (a *App) ImportVehicleOrderFile(scPath string, sourceFilePath string) (string, error) {
+	if strings.TrimSpace(sourceFilePath) == "" {
+		return "", fmt.Errorf("source path required")
+	}
+	data, err := os.ReadFile(sourceFilePath)
+	if err != nil {
+		return "", err
+	}
+	// 簡單驗證型別
+	var vo VehicleOrder
+	if err := json.Unmarshal(data, &vo); err != nil {
+		return "", fmt.Errorf("invalid json: %w", err)
+	}
+	if vo.Type != "vehicle_order" || vo.Version <= 0 {
+		return "", fmt.Errorf("unsupported vehicle_order json")
+	}
+	_, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Base(sourceFilePath)
+	if strings.ToLower(filepath.Ext(base)) != ".json" {
+		base = base + ".json"
+	}
+	dest := filepath.Join(saveDir, base)
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// SetActiveVehicleOrderByName 以 save/<name>.json 覆蓋 active.json，回傳 BaseKeys
+func (a *App) SetActiveVehicleOrderByName(scPath string, name string) ([]string, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	base, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return nil, err
+	}
+	src := filepath.Join(saveDir, name+".json")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return nil, err
+	}
+	var vo VehicleOrder
+	if err := json.Unmarshal(data, &vo); err != nil {
+		return nil, fmt.Errorf("invalid json: %w", err)
+	}
+	if vo.Type != "vehicle_order" || vo.Version <= 0 {
+		return nil, fmt.Errorf("unsupported vehicle_order json")
+	}
+	// 寫入 active.json
+	dest := filepath.Join(base, "active.json")
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return nil, err
+	}
+	return vo.BaseKeys, nil
+}
+
+// DeleteVehicleOrderSave 刪除 save/<name>.json
+func (a *App) DeleteVehicleOrderSave(scPath string, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("name is required")
+	}
+	_, saveDir, err := a.EnsureSortDirs(scPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(saveDir, name+".json")
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		return nil
+	}
+	if err := os.Remove(target); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteLocalization 刪除指定語系資料夾（嘗試 LIVE/PTU/EPTU），不存在則跳過
+func (a *App) DeleteLocalization(scPath string, localeName string) error {
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
+		return fmt.Errorf("invalid Star Citizen path")
+	}
+	if strings.TrimSpace(localeName) == "" {
+		return fmt.Errorf("invalid locale name")
+	}
+	// 防呆：使用中的語系不得刪除
+	if current := a.GetUserLanguage(scPath); current != "" && current == localeName {
+		return fmt.Errorf("cannot delete locale currently in use")
+	}
+	versionFolders := []string{"LIVE", "PTU", "EPTU"}
+	var lastErr error
+	var deleted bool
+	for _, vf := range versionFolders {
+		dir := filepath.Join(scPath, vf, "data", "Localization", localeName)
+		if _, err := os.Stat(dir); err == nil {
+			if err := os.RemoveAll(dir); err != nil {
+				lastErr = err
+				continue
+			}
+			deleted = true
+		}
+	}
+	if !deleted && lastErr != nil {
+		return lastErr
 	}
 	return nil
 }
