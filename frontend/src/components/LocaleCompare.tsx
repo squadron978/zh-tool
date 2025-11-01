@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 
 // 定義 INI 鍵值對類型
@@ -32,6 +32,34 @@ export const LocaleCompare = () => {
   const [deletingLine, setDeletingLine] = useState<number | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<DuplicateRow | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // 結果清單模糊搜尋（適用於 missing/value/duplicateKeys）
+  const [resultSearchKeyword, setResultSearchKeyword] = useState('');
+
+  // 虛擬滾動相關（參考編輯語系檔案的逐步載入）
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(450);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const ROW_HEIGHT = 80; // 估計每列高度（與編輯頁一致）
+
+  // 計算可見行數
+  const VISIBLE_ROWS = Math.ceil(containerHeight / ROW_HEIGHT);
+
+  // 動態計算容器高度（根據容器頂部到視窗底部的距離）
+  useEffect(() => {
+    const calculateHeight = () => {
+      const windowHeight = window.innerHeight;
+      const el = containerRef.current;
+      const top = el ? el.getBoundingClientRect().top : 200;
+      const bottomPadding = 16; // 底部留白
+      const newHeight = Math.max(500, Math.min(700, windowHeight - top - bottomPadding));
+      setContainerHeight(newHeight);
+    };
+
+    // 初始計算與監聽視窗大小
+    calculateHeight();
+    window.addEventListener('resize', calculateHeight);
+    return () => window.removeEventListener('resize', calculateHeight);
+  }, []);
 
   // 用於比對時的字串正規化：
   // - 標準化換行為 \n
@@ -76,6 +104,12 @@ export const LocaleCompare = () => {
     setDuplicateRows([]);
     setDeletingLine(null);
     setSearchQuery('');
+    setResultSearchKeyword('');
+    // 重置清單滾動位置
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+    setScrollTop(0);
   }, [compareMode]);
 
   // 檢查是否有 chinese_(traditional) 語系
@@ -213,24 +247,49 @@ export const LocaleCompare = () => {
         setSelectAll(false);
         return;
       } else if (compareMode === 'value' || compareMode === 'searchValue') {
-        // 僅比較「原檔案有的 key」在參考檔案中的值是否不同，不包含缺失鍵
         const referenceMap = new Map<string, string>((referenceItems || []).map((it: INIKeyValue) => [it.key, it.value]));
+        const currentMapForValue = new Map<string, string>((currentItems || []).map((it: INIKeyValue) => [it.key, it.value]));
         const q = normalizeForCompare(searchQuery).toLowerCase();
-        (currentItems || []).forEach((cur: INIKeyValue) => {
-          const refVal = referenceMap.get(cur.key);
-          if (typeof refVal === 'string') {
-            const nRef = normalizeForCompare(refVal);
-            const nCur = normalizeForCompare(cur.value);
-            const isDiff = nRef !== nCur;
-            const matches = compareMode === 'searchValue'
-              ? (q.length > 0 && (nRef.toLowerCase().includes(q) || nCur.toLowerCase().includes(q) || cur.key.toLowerCase().includes(q)))
-              : true;
-            if (isDiff && matches) {
-              // 差異清單的 value 保持參考檔案的值以供對照顯示
-              differences.push({ key: cur.key, value: refVal });
+
+        if (compareMode === 'value') {
+          // 只列出「不同值」的項目（僅針對同時存在於兩邊的鍵）
+          (currentItems || []).forEach((cur: INIKeyValue) => {
+            const refVal = referenceMap.get(cur.key);
+            if (typeof refVal === 'string') {
+              const nRef = normalizeForCompare(refVal);
+              const nCur = normalizeForCompare(cur.value);
+              const isDiff = nRef !== nCur;
+              if (isDiff) {
+                differences.push({ key: cur.key, value: refVal });
+              }
             }
-          }
-        });
+          });
+        } else {
+          // searchValue：列出「任一邊的值或 Key 符合搜尋」的項目，不要求不同
+          const refKeys = new Set<string>((referenceItems || []).map((it: INIKeyValue) => it.key));
+          const curKeys = new Set<string>((currentItems || []).map((it: INIKeyValue) => it.key));
+          const unionKeys = new Set<string>([...Array.from(refKeys), ...Array.from(curKeys)]);
+
+          // 優先依參考檔案順序，其次把當前檔案中有但參考沒有的附在後面
+          const orderedKeys: string[] = [];
+          (referenceItems || []).forEach((it: INIKeyValue) => orderedKeys.push(it.key));
+          (currentItems || []).forEach((it: INIKeyValue) => { if (!refKeys.has(it.key)) orderedKeys.push(it.key); });
+
+          orderedKeys.forEach((key) => {
+            if (!unionKeys.has(key)) return;
+            const refVal = referenceMap.get(key) || '';
+            const curVal = currentMapForValue.get(key) || '';
+            const nRef = normalizeForCompare(refVal).toLowerCase();
+            const nCur = normalizeForCompare(curVal).toLowerCase();
+            const keyHit = key.toLowerCase().includes(q);
+            const refHit = nRef.includes(q);
+            const curHit = nCur.includes(q);
+            if (q.length > 0 && (keyHit || refHit || curHit)) {
+              // value 欄保留參考檔案值，右欄使用 editedValues 顯示原檔值
+              differences.push({ key, value: refVal });
+            }
+          });
+        }
       } else {
         differences = missing || [];
       }
@@ -244,12 +303,13 @@ export const LocaleCompare = () => {
         const initialSelected: { [key: string]: boolean } = {};
         differences.forEach((item) => {
           initialValues[item.key] = (compareMode === 'value' || compareMode === 'searchValue') ? (currentMap.get(item.key) || '') : item.value;
-          initialSelected[item.key] = true; // 預設全選
+          // 預設不全選
+          initialSelected[item.key] = false;
         });
         setEditedValues(initialValues);
         setSelectedKeys(initialSelected);
-        setSelectAll(true);
-        setMessage({ type: 'info', text: `找到 ${differences.length} 個${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合且不同' : '缺少'}的項目` });
+        setSelectAll(false);
+        setMessage({ type: 'info', text: `找到 ${differences.length} 個${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合搜尋' : '缺少'}的項目` });
       } else {
         setMissingKeys([]);
         setEditedValues({});
@@ -268,12 +328,12 @@ export const LocaleCompare = () => {
     }
   };
 
-  // 全選/取消全選
+  // 全選/取消全選（僅作用於目前篩選後顯示的清單）
   const handleSelectAll = () => {
     const newSelectAll = !selectAll;
     setSelectAll(newSelectAll);
     const newSelected: { [key: string]: boolean } = {};
-    missingKeys.forEach((item) => {
+    filteredDiffItems.forEach((item) => {
       newSelected[item.key] = newSelectAll;
     });
     setSelectedKeys(newSelected);
@@ -284,7 +344,7 @@ export const LocaleCompare = () => {
     const newSelected = { ...selectedKeys, [key]: !selectedKeys[key] };
     setSelectedKeys(newSelected);
     // 檢查是否全選
-    const allSelected = missingKeys.every((item) => newSelected[item.key]);
+    const allSelected = filteredDiffItems.length > 0 && filteredDiffItems.every((item) => newSelected[item.key]);
     setSelectAll(allSelected);
   };
 
@@ -308,39 +368,73 @@ export const LocaleCompare = () => {
       const { UpdateINIFile } = await import('../../wailsjs/go/main/App');
       
       // 準備要更新的項目（只包含已勾選的）
-      // - 缺失模式：以使用者輸入（無則取參考值）
-      // - 比對值模式：以參考檔案的值覆蓋原檔案
-      const updates: INIKeyValue[] = selectedItems.map((item) => ({
-        key: item.key,
-        value: compareMode === 'value' ? item.value : (editedValues[item.key] || item.value)
-      }));
+      // - 缺失模式：以使用者輸入（空或未填則取參考值）
+      // - 比對值模式：以「原檔案的值」欄位（可編輯）為準
+      const updates: INIKeyValue[] = selectedItems.map((item) => {
+        if (compareMode === 'value') {
+          return { key: item.key, value: editedValues[item.key] ?? '' };
+        }
+        // missing/searchValue：searchValue 不可儲存已被禁止；missing 需要 fallback 到參考值
+        const userInput = editedValues[item.key];
+        const finalVal = (typeof userInput === 'string' && userInput.trim().length > 0) ? userInput : item.value;
+        return { key: item.key, value: finalVal };
+      });
 
       await UpdateINIFile(currentFilePath, referenceFilePath, updates);
-      setMessage({ type: 'success', text: `成功更新 ${updates.length} 個項目！` });
-      
-      // 移除已儲存的項目
-      const remainingKeys = missingKeys.filter((item) => !selectedKeys[item.key]);
-      setMissingKeys(remainingKeys);
-      
-      // 清理已儲存項目的狀態
-      const newEditedValues = { ...editedValues };
-      const newSelectedKeys = { ...selectedKeys };
-      selectedItems.forEach((item) => {
-        delete newEditedValues[item.key];
-        delete newSelectedKeys[item.key];
-      });
-      setEditedValues(newEditedValues);
-      setSelectedKeys(newSelectedKeys);
-      
-      if (remainingKeys.length === 0) {
-        setSelectAll(false);
-      }
+      // 依需求：更新後不要重新比對或移除列，保持目前清單與編輯狀態不變
+      setMessage({ type: 'success', text: `成功更新 ${updates.length} 個項目` });
     } catch (e: any) {
       setMessage({ type: 'error', text: `儲存失敗：${e?.message || e}` });
     } finally {
       setIsSaving(false);
     }
   };
+
+  // 虛擬滾動計算
+  // 篩選結果（差異/缺失列表）
+  const filteredDiffItems = useMemo(() => {
+    if (compareMode === 'duplicateKeys') return [] as INIKeyValue[];
+    const kw = resultSearchKeyword.trim().toLowerCase();
+    if (!kw) return missingKeys;
+    return missingKeys.filter((it) => {
+      const keyHit = it.key.toLowerCase().includes(kw);
+      const refValHit = (it.value || '').toLowerCase().includes(kw);
+      const curVal = editedValues[it.key] || '';
+      const curValHit = curVal.toLowerCase().includes(kw);
+      return keyHit || refValHit || curValHit;
+    });
+  }, [compareMode, missingKeys, resultSearchKeyword, editedValues]);
+
+  // 篩選結果（重複鍵列表）
+  const filteredDuplicateRows = useMemo(() => {
+    if (compareMode !== 'duplicateKeys') return [] as DuplicateRow[];
+    const kw = resultSearchKeyword.trim().toLowerCase();
+    if (!kw) return duplicateRows;
+    return duplicateRows.filter((row) => {
+      const keyHit = row.key.toLowerCase().includes(kw);
+      const valHit = (row.value || '').toLowerCase().includes(kw);
+      return keyHit || valHit;
+    });
+  }, [compareMode, duplicateRows, resultSearchKeyword]);
+
+  const visibleRange = useMemo(() => {
+    const buffer = 5; // 上下緩衝列數
+    const actualStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT));
+    const startIndex = Math.max(0, actualStart - buffer);
+    const listLength = filteredDiffItems.length;
+    const endIndex = Math.min(startIndex + VISIBLE_ROWS + buffer * 2, listLength);
+    return { startIndex, endIndex, actualStart };
+  }, [scrollTop, filteredDiffItems.length, VISIBLE_ROWS, ROW_HEIGHT, containerHeight]);
+
+  const visibleItems = useMemo(() => {
+    return filteredDiffItems.slice(visibleRange.startIndex, visibleRange.endIndex);
+  }, [filteredDiffItems, visibleRange.startIndex, visibleRange.endIndex]);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const current = e.currentTarget;
+    const nextTop = current.scrollTop;
+    requestAnimationFrame(() => setScrollTop(nextTop));
+  }, []);
 
   // 刪除重複列（依行數）
   const handleDeleteDuplicateLine = async (lineNumber: number) => {
@@ -455,7 +549,7 @@ export const LocaleCompare = () => {
               onClick={() => setCompareMode('value')}
               className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'value' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
             >
-              只比對值
+              只比對不同值
             </button>
             <button
               onClick={() => setCompareMode('duplicateKeys')}
@@ -512,7 +606,7 @@ export const LocaleCompare = () => {
             )}
             <div className="bg-black/40 border border-gray-700 rounded p-3">
               <div className="text-xs text-gray-400 mb-1">{
-                compareMode === 'duplicateKeys' ? '重複列數' : (compareMode === 'value' ? '差異的項目數' : (compareMode === 'searchValue' ? '符合且不同的項目數' : '缺少的項目數'))
+                compareMode === 'duplicateKeys' ? '重複列數' : (compareMode === 'value' ? '差異的項目數' : (compareMode === 'searchValue' ? '符合搜尋的項目數' : '缺少的項目數'))
               }</div>
               <div className="text-xl font-bold text-red-400">{compareMode === 'duplicateKeys' ? duplicateRows.length : missingKeys.length}</div>
             </div>
@@ -525,9 +619,18 @@ export const LocaleCompare = () => {
         <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-md font-bold text-orange-400">
-              {compareMode === 'value' ? '差異的項目' : compareMode === 'searchValue' ? '符合且不同的項目' : '缺少的項目'} ({missingKeys.filter(item => selectedKeys[item.key]).length}/{missingKeys.length} 已選)
+              {compareMode === 'value' ? '差異的項目' : compareMode === 'searchValue' ? '符合搜尋的項目' : '缺少的項目'} ({filteredDiffItems.filter(item => selectedKeys[item.key]).length}/{filteredDiffItems.length} 已選)
             </h3>
             <div className="flex gap-2">
+              {compareMode !== 'searchValue' && (
+                <input
+                  type="text"
+                  value={resultSearchKeyword}
+                  onChange={(e) => setResultSearchKeyword(e.target.value)}
+                  placeholder="在結果中搜尋 (Key/參考值/原檔值)"
+                  className="px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 w-64"
+                />
+              )}
               <button
                 onClick={handleSelectAll}
                 className="px-3 py-2 rounded-lg text-sm font-medium border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
@@ -536,19 +639,24 @@ export const LocaleCompare = () => {
               </button>
               <button
                 onClick={handleSave}
-                disabled={compareMode === 'searchValue' || isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
+                disabled={isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
                 className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
-                  (compareMode === 'searchValue' || isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
+                  (isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
                     ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
                     : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-500 hover:to-green-600 border-green-900/50'
                 }`}
               >
-                {compareMode === 'searchValue' ? '僅檢視（不可更新）' : (isSaving ? '儲存中...' : '批次更新')}
+                {isSaving ? '儲存中...' : '批次更新'}
               </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div
+            ref={containerRef}
+            onScroll={handleScroll}
+            className="overflow-y-auto overflow-x-auto"
+            style={{ height: containerHeight }}
+          >
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-gray-700">
@@ -561,8 +669,16 @@ export const LocaleCompare = () => {
                 </tr>
               </thead>
               <tbody>
-                {missingKeys.map((item, index) => (
-                  <tr key={index} className="border-b border-gray-800 hover:bg-gray-900/30">
+                {/* 上方間隔（維持捲動位置） */}
+                {visibleRange.startIndex > 0 && (
+                  <tr key="spacer-top">
+                    <td colSpan={4} style={{ height: visibleRange.startIndex * ROW_HEIGHT }} />
+                  </tr>
+                )}
+                {visibleItems.map((item, i) => (
+                  // 真實索引
+                  // const index = visibleRange.startIndex + i;
+                  <tr key={`${item.key}-${visibleRange.startIndex + i}`} className="border-b border-gray-800 hover:bg-gray-900/30">
                     <td className="px-3 py-3 align-top">
                       <input
                         type="checkbox"
@@ -586,14 +702,20 @@ export const LocaleCompare = () => {
                       <textarea
                         value={editedValues[item.key] || ''}
                         onChange={(e) => setEditedValues({ ...editedValues, [item.key]: e.target.value })}
-                        readOnly={compareMode === 'value' || compareMode === 'searchValue'}
+                        readOnly={false}
                         rows={3}
-                        placeholder={(compareMode === 'value' || compareMode === 'searchValue') ? '' : '輸入翻譯內容...'}
-                        className={`w-full px-2 py-1 text-xs border rounded font-mono resize-y ${(compareMode === 'value' || compareMode === 'searchValue') ? 'bg-gray-900/50 text-gray-400 border-gray-700' : 'bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none'}`}
+                        placeholder={(compareMode === 'value' || compareMode === 'searchValue') ? '可直接編輯原檔值...' : '輸入翻譯內容...'}
+                        className={`w-full px-2 py-1 text-xs border rounded font-mono resize-y bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none`}
                       />
                     </td>
                   </tr>
                 ))}
+                {/* 下方間隔 */}
+                {visibleRange.endIndex < filteredDiffItems.length && (
+                  <tr key="spacer-bottom">
+                    <td colSpan={4} style={{ height: (filteredDiffItems.length - visibleRange.endIndex) * ROW_HEIGHT }} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -605,6 +727,13 @@ export const LocaleCompare = () => {
         <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-md font-bold text-orange-400">重複鍵（所有出現列）</h3>
+            <input
+              type="text"
+              value={resultSearchKeyword}
+              onChange={(e) => setResultSearchKeyword(e.target.value)}
+              placeholder="在結果中搜尋 (Key/值)"
+              className="px-3 py-2 text-xs border rounded-lg bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 w-64"
+            />
           </div>
 
           <div className="overflow-x-auto">
@@ -618,7 +747,7 @@ export const LocaleCompare = () => {
                 </tr>
               </thead>
               <tbody>
-                {duplicateRows.map((row, index) => (
+                {filteredDuplicateRows.map((row, index) => (
                   <tr key={`${row.key}-${row.lineNumber}-${index}`} className="border-b border-gray-800 hover:bg-gray-900/30">
                     <td className="px-3 py-3 align-top text-xs text-gray-400">{row.lineNumber}</td>
                     <td className="px-3 py-3 align-top"><div className="text-xs text-orange-300 font-mono break-all">{row.key}</div></td>

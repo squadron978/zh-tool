@@ -502,15 +502,20 @@ func (a *App) UpdateINIFile(targetPath, referencePath string, updates []INIKeyVa
 		currentMap[item.Key] = item.Value
 	}
 
-	// 合併：按參考檔案的順序，使用現有值或更新值
+	// 合併：按參考檔案的順序，使用更新值（若有）或現有值
 	var merged []INIKeyValue
 	for _, refItem := range reference {
-		if val, exists := currentMap[refItem.Key]; exists {
-			// 如果當前檔案已有此 key，保留現有值
-			merged = append(merged, INIKeyValue{Key: refItem.Key, Value: val})
-		} else if val, exists := updateMap[refItem.Key]; exists {
-			// 如果是新增的項目，使用更新值
-			merged = append(merged, INIKeyValue{Key: refItem.Key, Value: val})
+		if curVal, exists := currentMap[refItem.Key]; exists {
+			if newVal, hasUpdate := updateMap[refItem.Key]; hasUpdate {
+				// 對既有鍵：若提供更新則覆蓋
+				merged = append(merged, INIKeyValue{Key: refItem.Key, Value: newVal})
+			} else {
+				// 無更新則保留原值
+				merged = append(merged, INIKeyValue{Key: refItem.Key, Value: curVal})
+			}
+		} else if newVal, hasUpdate := updateMap[refItem.Key]; hasUpdate {
+			// 新增鍵：使用更新值
+			merged = append(merged, INIKeyValue{Key: refItem.Key, Value: newVal})
 		}
 	}
 
