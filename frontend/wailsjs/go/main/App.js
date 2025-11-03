@@ -6,6 +6,14 @@ export function ApplyActiveVehicleOrderToLocale(arg1, arg2) {
   return window['go']['main']['App']['ApplyActiveVehicleOrderToLocale'](arg1, arg2);
 }
 
+export function ApplyLocalLocaleToGame(arg1, arg2) {
+  return window['go']['main']['App']['ApplyLocalLocaleToGame'](arg1, arg2);
+}
+
+export function BuildOrderedLocaleToTemp(arg1, arg2) {
+  return window['go']['main']['App']['BuildOrderedLocaleToTemp'](arg1, arg2);
+}
+
 export function CheckLocalizationExists(arg1) {
   return window['go']['main']['App']['CheckLocalizationExists'](arg1);
 }
@@ -38,6 +46,10 @@ export function DownloadAndInstallLocalization(arg1, arg2) {
   return window['go']['main']['App']['DownloadAndInstallLocalization'](arg1, arg2);
 }
 
+export function DownloadToTemp(arg1, arg2) {
+  return window['go']['main']['App']['DownloadToTemp'](arg1, arg2);
+}
+
 export function EnsureSortDirs(arg1) {
   return window['go']['main']['App']['EnsureSortDirs'](arg1);
 }
@@ -60,6 +72,10 @@ export function GetActiveVehicleOrder(arg1) {
 
 export function GetCurrentLocaleINIPath(arg1) {
   return window['go']['main']['App']['GetCurrentLocaleINIPath'](arg1);
+}
+
+export function GetLocalLocaleINIPath(arg1) {
+  return window['go']['main']['App']['GetLocalLocaleINIPath'](arg1);
 }
 
 export function GetLocalizationPath(arg1) {
@@ -90,6 +106,10 @@ export function ImportVehicleOrderFile(arg1, arg2) {
   return window['go']['main']['App']['ImportVehicleOrderFile'](arg1, arg2);
 }
 
+export function InstallLocaleFromFileElevated(arg1, arg2, arg3) {
+  return window['go']['main']['App']['InstallLocaleFromFileElevated'](arg1, arg2, arg3);
+}
+
 export function ListInstalledLocalizations(arg1) {
   return window['go']['main']['App']['ListInstalledLocalizations'](arg1);
 }
@@ -108,6 +128,10 @@ export function ResetToDefaultLanguage(arg1) {
 
 export function SaveFile(arg1, arg2) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2);
+}
+
+export function SaveLocalLocaleFromFile(arg1, arg2) {
+  return window['go']['main']['App']['SaveLocalLocaleFromFile'](arg1, arg2);
 }
 
 export function SaveTextFile(arg1, arg2, arg3) {

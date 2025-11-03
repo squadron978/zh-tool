@@ -13,6 +13,9 @@ interface AppState {
 
   // 語系列表刷新版本號（讓元件能監聽變化以重新偵測）
   localesVersion: number;
+
+  // 編輯器導向：指定欲編輯的語系名稱（由 PathSelector 觸發，LocaleEditor 讀取）
+  editorTargetLocale: string | null;
   
   // 系統資訊
   systemInfo: {
@@ -32,6 +35,7 @@ interface AppState {
   resetPath: () => void;
   setCurrentPage: (page: 'home' | 'localization' | 'shipSorting') => void;
   bumpLocalesVersion: () => void;
+  setEditorTargetLocale: (locale: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -42,6 +46,7 @@ export const useAppStore = create<AppState>((set) => ({
   localizationExists: false,
   currentPage: 'home',
   localesVersion: 0,
+  editorTargetLocale: null,
   systemInfo: null,
   officialWebsite: config.officialWebsite,
   
@@ -54,5 +59,6 @@ export const useAppStore = create<AppState>((set) => ({
   resetPath: () => set({ scPath: '', isPathValid: false, localizationExists: false }),
   setCurrentPage: (page) => set({ currentPage: page }),
   bumpLocalesVersion: () => set((state) => ({ localesVersion: state.localesVersion + 1 })),
+  setEditorTargetLocale: (locale) => set({ editorTargetLocale: locale }),
 }));
 

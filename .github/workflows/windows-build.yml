@@ -1,0 +1,74 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*.*.*' ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          $env:GOPATH = (go env GOPATH)
+          $env:PATH += ";$env:GOPATH\bin"
+          wails version
+
+      - name: Restore PFX (optional)
+        id: pfx
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_B64 }}
+          PFX_PWD: ${{ secrets.WINDOWS_SIGN_PWD }}
+        run: |
+          if (-not [string]::IsNullOrEmpty($env:PFX_B64)) {
+            $bytes = [System.Convert]::FromBase64String($env:PFX_B64)
+            $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
+            [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+            echo "pfx_path=$pfxPath" >> $env:GITHUB_OUTPUT
+            echo "pfx_pwd=$env:PFX_PWD"   >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Build (portable + installer)
+        run: |
+          $pfxPath = '${{ steps.pfx.outputs.pfx_path }}'
+          $pfxPwd  = '${{ steps.pfx.outputs.pfx_pwd }}'
+          if ($pfxPath -and $pfxPwd) {
+            ./build/windows/build_portable.ps1 -Platform windows/amd64 -Nsis -PfxPath $pfxPath -PfxPassword $pfxPwd
+          } else {
+            ./build/windows/build_portable.ps1 -Platform windows/amd64 -Nsis
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zh-tool-windows
+          path: |
+            build/bin/zh-tool.exe
+            build/bin/zh-tool-copier.exe
+            build/bin/zh-tool.zip
+            build/bin/*-installer.exe
+          if-no-files-found: warn
+
+

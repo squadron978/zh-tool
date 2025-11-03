@@ -25,6 +25,8 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
     setLocalizationExists,
     resetPath,
     localesVersion,
+    setCurrentPage,
+    setEditorTargetLocale,
   } = useAppStore();
 
   const [localizationPath, setLocalizationPath] = useState('');
@@ -221,8 +223,8 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
 
     try {
       const app: any = await import('../../wailsjs/go/main/App');
-      await app.InstallLocaleFromFileElevated(scPath, importLocaleName.trim(), importFilePath);
-      setSwitchMsg(`成功匯入語系（需要授權）：${importLocaleName}`);
+      await app.SaveLocalLocaleFromFile(importLocaleName.trim(), importFilePath);
+      setSwitchMsg(`成功匯入語系（已存到本機）：${importLocaleName}`);
       
       // 重新載入語系列表
       const { ListInstalledLocalizations } = await import('../../wailsjs/go/main/App');
@@ -322,10 +324,6 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                 已建立 Localization 資料夾（初始化完成）
               </div>
             )}
-            <div className="text-sm text-orange-200 mb-2">
-              <strong className="text-orange-400">已偵測到語系：</strong>
-              <span className="ml-1 text-gray-300">{installedLocales?.length ?? 0}</span>
-            </div>
             {currentUserLanguage && (
               <div className="text-xs text-gray-400 mb-3">目前 system.cfg 語系：
                 <span className="ml-1 text-orange-300 font-semibold">{currentUserLanguage}</span>
@@ -333,12 +331,36 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
             )}
 
             {/* 匯入按鈕 */}
-            <div className="mb-3">
+            <div className="mb-3 flex justify-between">
               <button
                 onClick={() => setShowImportDialog(!showImportDialog)}
                 className="px-4 py-2 rounded border text-sm bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-500 hover:to-red-500 border-orange-900/50"
               >
                 + 匯入語系檔案
+              </button>
+              <button
+                onClick={async () => {
+                  if (!isPathValid || !scPath || switching) return;
+                  setSwitching(true);
+                  setSwitchMsg('');
+                  try {
+                    await ResetToDefaultLanguage(scPath);
+                    setSwitchMsg('已重設為原版語系（system.cfg 已移除）');
+                    setCurrentUserLanguage('');
+                  } catch (e: any) {
+                    setSwitchMsg(`重設失敗：${e?.message || e}`);
+                  } finally {
+                    setSwitching(false);
+                  }
+                }}
+                disabled={!isPathValid || switching}
+                className={`px-3 py-2 rounded border text-xs ${
+                  (!isPathValid || switching)
+                    ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                    : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'
+                }`}
+              >
+                重設為原版語系
               </button>
             </div>
 
@@ -425,6 +447,32 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                           )}
                         </td>
                         <td className="px-3 py-3 text-center flex items-center gap-2 justify-center">
+                          {currentUserLanguage === locale && (
+                            <button
+                              onClick={async () => {
+                                if (!isPathValid || !scPath || switching) return;
+                                setSwitching(true);
+                                setSwitchMsg('');
+                                try {
+                                  const app: any = await import('../../wailsjs/go/main/App');
+                                  await app.ApplyLocalLocaleToGame(scPath, locale);
+                                  setSwitchMsg(`已重新套用：${locale}`);
+                                } catch (e: any) {
+                                  setSwitchMsg(`重新套用失敗：${e?.message || e}`);
+                                } finally {
+                                  setSwitching(false);
+                                }
+                              }}
+                              disabled={switching}
+                              className={`px-3 py-1 rounded border text-xs ${
+                                switching
+                                  ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                  : 'bg-green-700/40 text-green-300 border-green-900/50 hover:bg-green-700/50'
+                              }`}
+                            >
+                              重新套用
+                            </button>
+                          )}
                           {currentUserLanguage !== locale && (
                             <button
                               onClick={async () => {
@@ -438,6 +486,11 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                                     if (currentUserLanguage) {
                                       await app.StripActiveVehicleOrderFromLocale(scPath, currentUserLanguage);
                                     }
+                                  } catch {}
+                                  // 將本機該語系套用到遊戲資料夾（需要授權）
+                                  try {
+                                    const app: any = await import('../../wailsjs/go/main/App');
+                                    await app.ApplyLocalLocaleToGame(scPath, locale);
                                   } catch {}
                                   const p = await SetUserLanguage(scPath, locale);
                                   setSwitchMsg(`已切換至 ${locale}（寫入：${p}）`);
@@ -493,55 +546,44 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
                           >
                             匯出
                           </button>
-                  <button
-                    onClick={() => {
-                      if (currentUserLanguage === locale) {
-                        setSwitchMsg('使用中的語系不可刪除');
-                        return;
-                      }
-                      setConfirmDeleteLocale(locale);
-                    }}
-                    disabled={switching || currentUserLanguage === locale}
-                    title={currentUserLanguage === locale ? '使用中的語系不可刪除' : ''}
-                    className={`px-3 py-1 rounded border text-xs ${
-                      (switching || currentUserLanguage === locale)
-                        ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
-                        : 'bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40'
-                    }`}
-                  >
-                    刪除
-                  </button>
+                          <button
+                            onClick={() => {
+                              setEditorTargetLocale(locale);
+                              setCurrentPage('localization');
+                              setSwitchMsg(`正在切換至編輯器：${locale}`);
+                            }}
+                            disabled={switching}
+                            className={`px-3 py-1 rounded border text-xs ${
+                              switching
+                                ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                : 'bg-blue-900/30 text-blue-300 border-blue-900/50 hover:bg-blue-900/40'
+                            }`}
+                          >
+                            編輯
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (currentUserLanguage === locale) {
+                                setSwitchMsg('使用中的語系不可刪除');
+                                return;
+                              }
+                              setConfirmDeleteLocale(locale);
+                            }}
+                            disabled={switching || currentUserLanguage === locale}
+                            title={currentUserLanguage === locale ? '使用中的語系不可刪除' : ''}
+                            className={`px-3 py-1 rounded border text-xs ${
+                              (switching || currentUserLanguage === locale)
+                                ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                : 'bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40'
+                            }`}
+                          >
+                            刪除
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <div className="mt-3 flex justify-end">
-                  <button
-                    onClick={async () => {
-                      if (!isPathValid || !scPath || switching) return;
-                      setSwitching(true);
-                      setSwitchMsg('');
-                      try {
-                        await ResetToDefaultLanguage(scPath);
-                        setSwitchMsg('已重設為原版語系（system.cfg 已移除）');
-                        setCurrentUserLanguage('');
-                      } catch (e: any) {
-                        setSwitchMsg(`重設失敗：${e?.message || e}`);
-                      } finally {
-                        setSwitching(false);
-                      }
-                    }}
-                    disabled={!isPathValid || switching}
-                    className={`px-3 py-2 rounded border text-xs ${
-                      (!isPathValid || switching)
-                        ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
-                        : 'bg-gray-800 text-gray-300 border-orange-900/40 hover:bg-gray-700'
-                    }`}
-                  >
-                    重設為原版語系
-                  </button>
-                </div>
               </div>
             ) : (
               <div className="text-center py-6 text-gray-400 text-sm">

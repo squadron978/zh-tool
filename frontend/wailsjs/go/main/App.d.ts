@@ -4,6 +4,10 @@ import {main} from '../models';
 
 export function ApplyActiveVehicleOrderToLocale(arg1:string,arg2:string):Promise<void>;
 
+export function ApplyLocalLocaleToGame(arg1:string,arg2:string):Promise<void>;
+
+export function BuildOrderedLocaleToTemp(arg1:string,arg2:string):Promise<string>;
+
 export function CheckLocalizationExists(arg1:string):Promise<boolean>;
 
 export function CompareINIFiles(arg1:string,arg2:string):Promise<Array<main.INIKeyValue>>;
@@ -20,6 +24,8 @@ export function DetectStarCitizenPath():Promise<string>;
 
 export function DownloadAndInstallLocalization(arg1:string,arg2:string):Promise<string>;
 
+export function DownloadToTemp(arg1:string,arg2:string):Promise<string>;
+
 export function EnsureSortDirs(arg1:string):Promise<string>;
 
 export function ExportLocaleFile(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -31,6 +37,8 @@ export function ExportVehicleOrderFile(arg1:string,arg2:string,arg3:string):Prom
 export function GetActiveVehicleOrder(arg1:string):Promise<Array<string>>;
 
 export function GetCurrentLocaleINIPath(arg1:string):Promise<string>;
+
+export function GetLocalLocaleINIPath(arg1:string):Promise<string>;
 
 export function GetLocalizationPath(arg1:string):Promise<string>;
 
@@ -46,6 +54,8 @@ export function ImportLocaleFile(arg1:string,arg2:string,arg3:string):Promise<vo
 
 export function ImportVehicleOrderFile(arg1:string,arg2:string):Promise<string>;
 
+export function InstallLocaleFromFileElevated(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function ListInstalledLocalizations(arg1:string):Promise<Array<string>>;
 
 export function ListVehicleOrderSaves(arg1:string):Promise<Array<string>>;
@@ -55,6 +65,8 @@ export function ReadINIFile(arg1:string):Promise<Array<main.INIKeyValue>>;
 export function ResetToDefaultLanguage(arg1:string):Promise<void>;
 
 export function SaveFile(arg1:string,arg2:string):Promise<string>;
+
+export function SaveLocalLocaleFromFile(arg1:string,arg2:string):Promise<string>;
 
 export function SaveTextFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 

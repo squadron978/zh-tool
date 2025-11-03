@@ -45,7 +45,7 @@ const TableRow = memo(({
 TableRow.displayName = 'TableRow';
 
 export const LocaleEditor = () => {
-  const { scPath, isPathValid } = useAppStore();
+  const { scPath, isPathValid, editorTargetLocale, setEditorTargetLocale } = useAppStore();
   const [currentFilePath, setCurrentFilePath] = useState('');
   const [allItems, setAllItems] = useState<INIKeyValue[]>([]);
   const [editedValues, setEditedValues] = useState<{ [key: string]: string }>({});
@@ -99,6 +99,10 @@ export const LocaleEditor = () => {
   // 檢查當前語系檔案路徑（不自動載入內容）
   useEffect(() => {
     const checkCurrentLocale = async () => {
+      // 若正由語系檔管理導向編輯，或已由導向自動設定過路徑，則不覆蓋
+      if (editorTargetLocale || currentFilePath) {
+        return;
+      }
       if (!isPathValid || !scPath) {
         setCurrentFilePath('');
         setAllItems([]);
@@ -132,7 +136,40 @@ export const LocaleEditor = () => {
     };
 
     void checkCurrentLocale();
-  }, [scPath, isPathValid]);
+  }, [scPath, isPathValid, editorTargetLocale, currentFilePath]);
+
+  // 若指定要編輯的語系，解析其本機路徑並帶入（不自動載入內容）
+  useEffect(() => {
+    const run = async () => {
+      if (!editorTargetLocale) return;
+      try {
+        const app: any = await import('../../wailsjs/go/main/App');
+        const p = await app.GetLocalLocaleINIPath(editorTargetLocale);
+        setCurrentFilePath(p);
+        // 清理舊狀態
+        setAllItems([]);
+        setEditedValues({});
+        setSearchKeyword('');
+        setActiveSearchKeyword('');
+        setSortField('none');
+        setSortOrder('asc');
+        setShowReplacePanel(false);
+        // 自動載入內容
+        const items = await app.ReadINIFile(p);
+        setAllItems(items || []);
+        const initialValues: { [key: string]: string } = {};
+        (items || []).forEach((it: any) => { initialValues[it.key] = it.value; });
+        setEditedValues(initialValues);
+        setIsDataLoaded(true);
+        setMessage({ type: 'success', text: `已載入 ${items?.length || 0} 個項目（${editorTargetLocale}）` });
+      } catch (e: any) {
+        setMessage({ type: 'error', text: `找不到本機語系檔：${editorTargetLocale}` });
+      } finally {
+        setEditorTargetLocale(null);
+      }
+    };
+    void run();
+  }, [editorTargetLocale, setEditorTargetLocale]);
 
   // 使用 useMemo 優化搜尋和排序處理，避免輸入時重新計算
   const displayItems = useMemo(() => {

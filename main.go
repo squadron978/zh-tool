@@ -16,8 +16,8 @@ func main() {
 	app := NewApp()
 
 	// Create application with options
-	err := wails.Run(&options.App{
-		Title:  "Star Citizen 中文化工具",
+    err := wails.Run(&options.App{
+        Title:  "Star Citizen 中文化工具",
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{

@@ -7,7 +7,7 @@ import { LocaleEditor } from './LocaleEditor';
 import { ListInstalledLocalizations, SetUserLanguage, DetectStarCitizenPath, ValidateStarCitizenPath, CheckLocalizationExists } from '../../wailsjs/go/main/App';
 
 export const GettingStarted = () => {
-  const { setCurrentPage, scPath, isPathValid, bumpLocalesVersion, setScPath, setIsPathValid, setIsPathDetecting, setLocalizationExists } = useAppStore();
+  const { setCurrentPage, scPath, isPathValid, bumpLocalesVersion, setScPath, setIsPathValid, setIsPathDetecting, setLocalizationExists, editorTargetLocale, setEditorTargetLocale } = useAppStore();
   const [isInstalling, setIsInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [hasChineseLocale, setHasChineseLocale] = useState(false);
@@ -58,6 +58,14 @@ export const GettingStarted = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 若外部指定要編輯某語系，切到編輯分頁
+  useEffect(() => {
+    if (editorTargetLocale) {
+      setTabsValue('tab-locale-editor');
+      // 交由 LocaleEditor 讀取 editorTargetLocale 進行載入路徑
+    }
+  }, [editorTargetLocale]);
+
   const handleDownloadInstall = async () => {
     if (!isPathValid || !scPath) {
       setAdvancedNotice('請重新設定至正確的安裝目錄');
@@ -80,8 +88,10 @@ export const GettingStarted = () => {
       const app: any = await import('../../wailsjs/go/main/App');
       const tmpPath = await app.DownloadToTemp(url, 'global.ini');
       log(`下載完成：${tmpPath}`);
+      const savedLocal = await app.SaveLocalLocaleFromFile('chinese_(traditional)', tmpPath);
+      log(`已存到本機：${savedLocal}`);
       log('套用至遊戲資料夾（將彈出系統授權）...');
-      await app.InstallLocaleFromFileElevated(scPath, 'chinese_(traditional)', tmpPath);
+      await app.ApplyLocalLocaleToGame(scPath, 'chinese_(traditional)');
       log('已寫入 LIVE/data/Localization/chinese_(traditional)/global.ini');
       log('設定 system.cfg 語系為 chinese_(traditional)...');
       await SetUserLanguage(scPath, 'chinese_(traditional)');
@@ -101,8 +111,9 @@ export const GettingStarted = () => {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3500);
     } catch (e: any) {
-      setInstallMsg({ type: 'error', text: '網路有問題，請稍後重試' });
-      setInstallLogs((prev) => [...prev, '網路有問題，請稍後重試']);
+      const msg = e?.message || String(e) || '執行失敗';
+      setInstallMsg({ type: 'error', text: msg });
+      setInstallLogs((prev) => [...prev, msg]);
     } finally {
       setIsInstalling(false);
     }
