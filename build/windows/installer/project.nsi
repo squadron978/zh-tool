@@ -88,6 +88,9 @@ Section
 
     !insertmacro wails.files
 
+    # Include elevated copier utility
+    File "..\..\bin\zh-tool-copier.exe"
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 

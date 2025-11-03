@@ -1,6 +1,6 @@
 Param(
-  [Parameter(Mandatory=$true)][string]$PfxPath,
-  [Parameter(Mandatory=$true)][string]$PfxPassword,
+  [string]$PfxPath,
+  [string]$PfxPassword,
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [string[]]$Files = @()
 )
@@ -12,6 +12,11 @@ function Sign-File([string]$Path) {
   & signtool verify /pa "$Path" | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Verify failed: $Path" }
   Write-Host "Signed: $Path" -ForegroundColor Green
+}
+
+if (-not $PfxPath -or -not $PfxPassword) {
+  Write-Host "Skip signing (no PFX provided)." -ForegroundColor Yellow
+  exit 0
 }
 
 if ($Files.Count -eq 0) {

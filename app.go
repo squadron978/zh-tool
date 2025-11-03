@@ -11,6 +11,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
+	"syscall"
+	"unsafe"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -1228,4 +1231,150 @@ func (a *App) ImportLocaleFile(scPath, localeName, sourceFilePath string) error 
 	}
 
 	return fmt.Errorf("no valid version folder found")
+}
+
+// DownloadToTemp 下載檔案到使用者本機暫存資料夾，回傳完整路徑
+func (a *App) DownloadToTemp(url string, filename string) (string, error) {
+	if strings.TrimSpace(url) == "" {
+		return "", fmt.Errorf("url required")
+	}
+	if strings.TrimSpace(filename) == "" {
+		filename = fmt.Sprintf("download-%d.ini", time.Now().Unix())
+	}
+	// 暫存路徑：%LOCALAPPDATA%/zh-tool/tmp
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		// fallback to OS temp
+		base = os.TempDir()
+	}
+	tmpDir := filepath.Join(base, "zh-tool", "tmp")
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(tmpDir, filename)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "zh-tool/1.0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("download failed: status %d", resp.StatusCode)
+	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// InstallLocaleFromFileElevated 以提權方式將來源 global.ini 安裝到 LIVE/data/Localization/<localeName>/global.ini
+// 實作方式：啟動同目錄下的 zh-tool-copier.exe，使用 UAC 提權（PowerShell Start-Process -Verb RunAs）
+func (a *App) InstallLocaleFromFileElevated(scPath, localeName, sourceFilePath string) error {
+	// 僅支援 Windows
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("elevated install only supported on Windows")
+	}
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
+		return fmt.Errorf("invalid Star Citizen path")
+	}
+	if strings.TrimSpace(localeName) == "" {
+		return fmt.Errorf("invalid locale name")
+	}
+	if sourceFilePath == "" {
+		return fmt.Errorf("source file path is required")
+	}
+	if st, err := os.Stat(sourceFilePath); err != nil || st.IsDir() {
+		return fmt.Errorf("source file not found: %s", sourceFilePath)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot resolve executable path: %w", err)
+	}
+	helper := filepath.Join(filepath.Dir(exePath), "zh-tool-copier.exe")
+	if _, err := os.Stat(helper); err != nil {
+		return fmt.Errorf("helper not found: %s", helper)
+	}
+
+	args := []string{
+		"--game", scPath,
+		"--source", sourceFilePath,
+		"--locale", strings.TrimSpace(localeName),
+	}
+	param := windowsJoinArgs(args)
+	cwd := filepath.Dir(helper)
+
+	modShell32 := syscall.NewLazyDLL("shell32.dll")
+	procShellExecuteW := modShell32.NewProc("ShellExecuteW")
+	verb := syscall.StringToUTF16Ptr("runas")
+	file := syscall.StringToUTF16Ptr(helper)
+	parameters := syscall.StringToUTF16Ptr(param)
+	directory := syscall.StringToUTF16Ptr(cwd)
+	showCmd := uintptr(0) // SW_HIDE
+
+	r, _, e := procShellExecuteW.Call(0,
+		uintptr(unsafe.Pointer(verb)),
+		uintptr(unsafe.Pointer(file)),
+		uintptr(unsafe.Pointer(parameters)),
+		uintptr(unsafe.Pointer(directory)),
+		showCmd,
+	)
+	if r <= 32 {
+		return fmt.Errorf("ShellExecuteW failed: %v (ret=%d)", e, r)
+	}
+	return nil
+}
+
+// windowsJoinArgs 以 Windows 規則組合命令列參數，必要時加上雙引號並跳脫
+func windowsJoinArgs(args []string) string {
+	var b strings.Builder
+	for i, a := range args {
+		needQuote := false
+		for _, r := range a {
+			if r == ' ' || r == '"' || r == '\t' || r == '\n' || r == '\r' {
+				needQuote = true
+				break
+			}
+		}
+		if needQuote {
+			b.WriteByte('"')
+			// 依據 Windows 規則跳脫反斜線與雙引號
+			backslashes := 0
+			for _, ch := range a {
+				if ch == '\\' {
+					backslashes++
+					b.WriteRune(ch)
+					continue
+				}
+				if ch == '"' {
+					b.WriteString(strings.Repeat("\\", backslashes))
+					backslashes = 0
+					b.WriteString("\\\"")
+					continue
+				}
+				backslashes = 0
+				b.WriteRune(ch)
+			}
+			if backslashes > 0 {
+				b.WriteString(strings.Repeat("\\", backslashes))
+			}
+			b.WriteByte('"')
+		} else {
+			b.WriteString(a)
+		}
+		if i != len(args)-1 {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
 }

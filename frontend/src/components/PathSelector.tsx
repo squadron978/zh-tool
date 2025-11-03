@@ -220,9 +220,9 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
     setSwitchMsg('');
 
     try {
-      const { ImportLocaleFile } = await import('../../wailsjs/go/main/App');
-      await ImportLocaleFile(scPath, importLocaleName.trim(), importFilePath);
-      setSwitchMsg(`成功匯入語系：${importLocaleName}`);
+      const app: any = await import('../../wailsjs/go/main/App');
+      await app.InstallLocaleFromFileElevated(scPath, importLocaleName.trim(), importFilePath);
+      setSwitchMsg(`成功匯入語系（需要授權）：${importLocaleName}`);
       
       // 重新載入語系列表
       const { ListInstalledLocalizations } = await import('../../wailsjs/go/main/App');

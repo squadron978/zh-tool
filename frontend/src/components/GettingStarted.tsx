@@ -4,7 +4,7 @@ import { useAppStore } from '../store/appStore';
 import { PathSelector } from './PathSelector';
 import { LocaleCompare } from './LocaleCompare';
 import { LocaleEditor } from './LocaleEditor';
-import { ListInstalledLocalizations, DownloadAndInstallLocalization, SetUserLanguage, DetectStarCitizenPath, ValidateStarCitizenPath, CheckLocalizationExists } from '../../wailsjs/go/main/App';
+import { ListInstalledLocalizations, SetUserLanguage, DetectStarCitizenPath, ValidateStarCitizenPath, CheckLocalizationExists } from '../../wailsjs/go/main/App';
 
 export const GettingStarted = () => {
   const { setCurrentPage, scPath, isPathValid, bumpLocalesVersion, setScPath, setIsPathValid, setIsPathDetecting, setLocalizationExists } = useAppStore();
@@ -77,18 +77,21 @@ export const GettingStarted = () => {
       log(hasChineseLocale ? '偵測到已存在中文語系，將執行自動更新' : '未偵測到中文語系，將執行自動安裝');
       const url = 'https://squadron978.net/api/localization/latest/global.ini';
       log('下載中文化檔案中...');
-      const saved = await DownloadAndInstallLocalization(scPath, url);
-      log(`下載完成並寫入：${saved}`);
+      const app: any = await import('../../wailsjs/go/main/App');
+      const tmpPath = await app.DownloadToTemp(url, 'global.ini');
+      log(`下載完成：${tmpPath}`);
+      log('套用至遊戲資料夾（將彈出系統授權）...');
+      await app.InstallLocaleFromFileElevated(scPath, 'chinese_(traditional)', tmpPath);
+      log('已寫入 LIVE/data/Localization/chinese_(traditional)/global.ini');
       log('設定 system.cfg 語系為 chinese_(traditional)...');
       await SetUserLanguage(scPath, 'chinese_(traditional)');
       log('system.cfg 設定完成');
       // 若存在 active.json，安裝後自動套用排序到 chinese_(traditional)
       try {
-        const app: any = await import('../../wailsjs/go/main/App');
         await app.ApplyActiveVehicleOrderToLocale(scPath, 'chinese_(traditional)');
         log('已套用 active.json 排序至 chinese_(traditional)');
       } catch {}
-      setInstallMsg({ type: 'success', text: `已完成${hasChineseLocale ? '更新' : '安裝'}：${saved}` });
+      setInstallMsg({ type: 'success', text: `已完成${hasChineseLocale ? '更新' : '安裝'}中文化` });
       // 重新檢查語系狀態
       log('重新偵測語系列表...');
       const locales = await ListInstalledLocalizations(scPath);
