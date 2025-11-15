@@ -13,6 +13,28 @@
                 "cwd": "${workspaceFolder}/frontend"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "build: portable with installer",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/build/windows/build_portable.ps1",
+                "-Platform",
+                "windows/amd64",
+                "-Nsis"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
         }
     ]
 }

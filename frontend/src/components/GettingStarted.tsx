@@ -88,6 +88,7 @@ export const GettingStarted = () => {
       const app: any = await import('../../wailsjs/go/main/App');
       const tmpPath = await app.DownloadToTemp(url, 'global.ini');
       log(`下載完成：${tmpPath}`);
+      log('驗證檔案完整性...');
       const savedLocal = await app.SaveLocalLocaleFromFile('chinese_(traditional)', tmpPath);
       log(`已存到本機：${savedLocal}`);
       log('套用至遊戲資料夾（將彈出系統授權）...');

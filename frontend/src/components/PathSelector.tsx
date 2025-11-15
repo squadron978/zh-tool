@@ -11,6 +11,7 @@ import {
   ListInstalledLocalizations,
   SetUserLanguage,
   ResetToDefaultLanguage,
+  SaveStarCitizenPath,
 } from '../../wailsjs/go/main/App';
 
 export const PathSelector = ({ showPathSection = true, showLocaleSection = true }: { showPathSection?: boolean; showLocaleSection?: boolean }) => {
@@ -168,6 +169,13 @@ export const PathSelector = ({ showPathSection = true, showLocaleSection = true 
         setIsPathValid(valid);
         
         if (valid) {
+          // 保存路徑到配置文件
+          try {
+            await SaveStarCitizenPath(selectedPath);
+          } catch (err) {
+            console.warn('保存路徑失敗:', err);
+          }
+
           const hasHasBaseApi = (window as any)?.go?.main?.App?.HasLocalizationBase;
           const hasCreateDirApi = (window as any)?.go?.main?.App?.CreateLocalizationDir;
           const hasListApi = (window as any)?.go?.main?.App?.ListInstalledLocalizations;

@@ -42,6 +42,8 @@ export function GetLocalLocaleINIPath(arg1:string):Promise<string>;
 
 export function GetLocalizationPath(arg1:string):Promise<string>;
 
+export function GetSavedStarCitizenPath():Promise<string>;
+
 export function GetSortBasePath(arg1:string):Promise<string>;
 
 export function GetSystemInfo():Promise<Record<string, string>>;
@@ -67,6 +69,8 @@ export function ResetToDefaultLanguage(arg1:string):Promise<void>;
 export function SaveFile(arg1:string,arg2:string):Promise<string>;
 
 export function SaveLocalLocaleFromFile(arg1:string,arg2:string):Promise<string>;
+
+export function SaveStarCitizenPath(arg1:string):Promise<void>;
 
 export function SaveTextFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 

@@ -24,6 +24,7 @@ export const LocaleCompare = () => {
   const [selectAll, setSelectAll] = useState(false);
   const [isComparing, setIsComparing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [hasChineseLocale, setHasChineseLocale] = useState(false);
   const [compareStats, setCompareStats] = useState<{ currentCount: number; referenceCount: number } | null>(null);
@@ -390,6 +391,49 @@ export const LocaleCompare = () => {
     }
   };
 
+  // 匯出為檔案
+  const handleExport = async () => {
+    if (missingKeys.length === 0) {
+      setMessage({ type: 'error', text: '沒有可匯出的項目' });
+      return;
+    }
+
+    // 只匯出已勾選的項目
+    const selectedItems = missingKeys.filter((item) => selectedKeys[item.key]);
+    if (selectedItems.length === 0) {
+      setMessage({ type: 'error', text: '請至少勾選一個項目' });
+      return;
+    }
+
+    setIsExporting(true);
+    setMessage(null);
+
+    try {
+      const { SaveFile, WriteINIFile } = await import('../../wailsjs/go/main/App');
+      
+      // 讓用戶選擇儲存位置
+      const savePath = await SaveFile('匯出為檔案', 'exported.ini');
+      if (!savePath) {
+        // 用戶取消
+        setIsExporting(false);
+        return;
+      }
+
+      // 準備要匯出的項目（使用參考檔案的 key 和值）
+      const exportItems: INIKeyValue[] = selectedItems.map((item) => ({
+        key: item.key,
+        value: item.value
+      }));
+
+      await WriteINIFile(savePath, exportItems);
+      setMessage({ type: 'success', text: `成功匯出 ${exportItems.length} 個項目到 ${savePath}` });
+    } catch (e: any) {
+      setMessage({ type: 'error', text: `匯出失敗：${e?.message || e}` });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // 虛擬滾動計算
   // 篩選結果（差異/缺失列表）
   const filteredDiffItems = useMemo(() => {
@@ -636,6 +680,17 @@ export const LocaleCompare = () => {
                 className="px-3 py-2 rounded-lg text-sm font-medium border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
               >
                 {selectAll ? '取消全選' : '全選'}
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={isExporting || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                  (isExporting || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
+                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                    : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-500 hover:to-blue-600 border-blue-900/50'
+                }`}
+              >
+                {isExporting ? '匯出中...' : '匯出為檔案'}
               </button>
               <button
                 onClick={handleSave}

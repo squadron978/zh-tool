@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,16 +37,42 @@ func (a *App) startup(ctx context.Context) {
 
 // DetectStarCitizenPath 自動偵測 Star Citizen 安裝路徑
 func (a *App) DetectStarCitizenPath() string {
+	// 首先檢查已保存的路徑
+	savedPath := a.GetSavedStarCitizenPath()
+	if savedPath != "" {
+		if _, err := os.Stat(savedPath); err == nil {
+			// 驗證保存的路徑是否仍然有效
+			if a.ValidateStarCitizenPath(savedPath) {
+				return savedPath
+			}
+		}
+	}
+
 	var possiblePaths []string
 
 	if runtime.GOOS == "windows" {
-		// Windows 常見安裝路徑
+		// 先檢查常見安裝路徑
 		possiblePaths = []string{
 			filepath.Join(os.Getenv("ProgramFiles"), "Roberts Space Industries", "StarCitizen"),
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Roberts Space Industries", "StarCitizen"),
 			filepath.Join("C:", "Program Files", "Roberts Space Industries", "StarCitizen"),
-			filepath.Join("D:", "Games", "StarCitizen"),
-			filepath.Join("E:", "Games", "StarCitizen"),
+		}
+
+		// 檢查常見路徑是否存在
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				if a.ValidateStarCitizenPath(path) {
+					a.SaveStarCitizenPath(path)
+					return path
+				}
+			}
+		}
+
+		// 如果常見路徑都沒找到，掃描所有磁碟機
+		detectedPath := a.scanDrivesForStarCitizen()
+		if detectedPath != "" {
+			a.SaveStarCitizenPath(detectedPath)
+			return detectedPath
 		}
 	} else if runtime.GOOS == "linux" {
 		// Linux 常見路徑
@@ -54,16 +81,192 @@ func (a *App) DetectStarCitizenPath() string {
 			filepath.Join(homeDir, ".wine", "drive_c", "Program Files", "Roberts Space Industries", "StarCitizen"),
 			filepath.Join(homeDir, "Games", "StarCitizen"),
 		}
-	}
 
-	// 檢查路徑是否存在
-	for _, path := range possiblePaths {
-		if _, err := os.Stat(path); err == nil {
-			return path
+		// 檢查路徑是否存在
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				if a.ValidateStarCitizenPath(path) {
+					a.SaveStarCitizenPath(path)
+					return path
+				}
+			}
 		}
 	}
 
 	return ""
+}
+
+// scanDrivesForStarCitizen 掃描所有磁碟機尋找 Star Citizen 安裝路徑
+func (a *App) scanDrivesForStarCitizen() string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+
+	// 獲取所有邏輯磁碟機
+	drives := a.getLogicalDrives()
+	targetPath := filepath.Join("Roberts Space Industries", "StarCitizen")
+
+	// 常見的遊戲安裝目錄名稱
+	commonGameDirs := []string{
+		"Games",
+		"Game",
+		"Steam",
+		"SteamLibrary",
+		"Epic Games",
+		"GOG Games",
+		"Program Files",
+		"Program Files (x86)",
+	}
+
+	for _, drive := range drives {
+		// 跳過 A: 和 B:（通常是軟碟機）
+		if drive == "A:" || drive == "B:" {
+			continue
+		}
+
+		// 檢查該磁碟機是否可訪問
+		if _, err := os.Stat(drive); err != nil {
+			continue
+		}
+
+		// 1. 直接在磁碟機根目錄下尋找
+		searchPath := filepath.Join(drive, targetPath)
+		if _, err := os.Stat(searchPath); err == nil {
+			if a.ValidateStarCitizenPath(searchPath) {
+				return searchPath
+			}
+		}
+
+		// 2. 在常見的遊戲目錄中尋找
+		for _, gameDir := range commonGameDirs {
+			gamePath := filepath.Join(drive, gameDir)
+			if _, err := os.Stat(gamePath); err != nil {
+				continue
+			}
+
+			// 在遊戲目錄下尋找目標路徑
+			searchPath := filepath.Join(gamePath, targetPath)
+			if _, err := os.Stat(searchPath); err == nil {
+				if a.ValidateStarCitizenPath(searchPath) {
+					return searchPath
+				}
+			}
+
+			// 也在遊戲目錄的直接子目錄中搜索（例如 D:\Games\StarCitizen）
+			directPath := filepath.Join(gamePath, "StarCitizen")
+			if _, err := os.Stat(directPath); err == nil {
+				if a.ValidateStarCitizenPath(directPath) {
+					return directPath
+				}
+			}
+		}
+
+		// 3. 在用戶目錄下尋找（如果磁碟機是系統碟）
+		if drive == "C:" {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				userPaths := []string{
+					filepath.Join(homeDir, "Games", targetPath),
+					filepath.Join(homeDir, "Documents", "StarCitizen"),
+					filepath.Join(homeDir, "Desktop", targetPath),
+				}
+				for _, up := range userPaths {
+					if _, err := os.Stat(up); err == nil {
+						if a.ValidateStarCitizenPath(up) {
+							return up
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// getLogicalDrives 獲取所有邏輯磁碟機（Windows）
+func (a *App) getLogicalDrives() []string {
+	if runtime.GOOS != "windows" {
+		return []string{}
+	}
+
+	var drives []string
+	// 從 C: 到 Z: 檢查
+	for i := 'C'; i <= 'Z'; i++ {
+		drive := string(i) + ":"
+		// 嘗試訪問磁碟機根目錄以確認其存在
+		if _, err := os.Stat(drive); err == nil {
+			drives = append(drives, drive)
+		}
+	}
+	return drives
+}
+
+
+// SaveStarCitizenPath 保存 Star Citizen 路徑到配置文件
+func (a *App) SaveStarCitizenPath(path string) error {
+	if path == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+
+	configPath := a.getConfigPath()
+	configDir := filepath.Dir(configPath)
+
+	// 確保配置目錄存在
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// 讀取現有配置（如果存在）
+	config := make(map[string]interface{})
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			// 如果解析失敗，使用空配置
+			config = make(map[string]interface{})
+		}
+	}
+
+	// 更新路徑
+	config["starCitizenPath"] = path
+	config["lastUpdated"] = time.Now().Format(time.RFC3339)
+
+	// 寫入配置文件
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return nil
+}
+
+// GetSavedStarCitizenPath 從配置文件讀取已保存的 Star Citizen 路徑
+func (a *App) GetSavedStarCitizenPath() string {
+	configPath := a.getConfigPath()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return ""
+	}
+
+	if path, ok := config["starCitizenPath"].(string); ok {
+		return path
+	}
+
+	return ""
+}
+
+// getConfigPath 獲取配置文件路徑
+func (a *App) getConfigPath() string {
+	base := getLocalDataBase()
+	return filepath.Join(base, "config.json")
 }
 
 // SelectDirectory 開啟目錄選擇對話框
@@ -1229,6 +1432,7 @@ func getLocalTmpDir() string {
 }
 
 // DownloadToTemp 下載檔案到使用者本機暫存資料夾，回傳完整路徑
+// 如果是 global.ini 檔案，會檢查檔案完整性（行數應至少 80000 行）
 func (a *App) DownloadToTemp(url string, filename string) (string, error) {
 	if strings.TrimSpace(url) == "" {
 		return "", fmt.Errorf("url required")
@@ -1269,7 +1473,44 @@ func (a *App) DownloadToTemp(url string, filename string) (string, error) {
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		return "", err
 	}
+
+	// 如果是 global.ini 檔案，檢查檔案完整性
+	if strings.HasSuffix(strings.ToLower(filename), "global.ini") || strings.Contains(strings.ToLower(url), "global.ini") {
+		lineCount, err := a.countFileLines(dest)
+		if err != nil {
+			// 如果無法讀取檔案，刪除下載的檔案並返回錯誤
+			os.Remove(dest)
+			return "", fmt.Errorf("無法驗證下載檔案完整性: %w", err)
+		}
+		if lineCount < 80000 {
+			// 檔案不完整，刪除下載的檔案並返回錯誤
+			os.Remove(dest)
+			return "", fmt.Errorf("下載的檔案不完整（僅有 %d 行，應至少 80000 行）。請檢查網路連線並重試", lineCount)
+		}
+	}
+
 	return dest, nil
+}
+
+// countFileLines 計算檔案的行數
+func (a *App) countFileLines(filePath string) (int, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	lineCount := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lineCount++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+
+	return lineCount, nil
 }
 
 // InstallLocaleFromFileElevated 以提權方式將來源 global.ini 安裝到 LIVE/data/Localization/<localeName>/global.ini

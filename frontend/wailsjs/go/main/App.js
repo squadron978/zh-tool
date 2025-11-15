@@ -82,6 +82,10 @@ export function GetLocalizationPath(arg1) {
   return window['go']['main']['App']['GetLocalizationPath'](arg1);
 }
 
+export function GetSavedStarCitizenPath() {
+  return window['go']['main']['App']['GetSavedStarCitizenPath']();
+}
+
 export function GetSortBasePath(arg1) {
   return window['go']['main']['App']['GetSortBasePath'](arg1);
 }
@@ -132,6 +136,10 @@ export function SaveFile(arg1, arg2) {
 
 export function SaveLocalLocaleFromFile(arg1, arg2) {
   return window['go']['main']['App']['SaveLocalLocaleFromFile'](arg1, arg2);
+}
+
+export function SaveStarCitizenPath(arg1) {
+  return window['go']['main']['App']['SaveStarCitizenPath'](arg1);
 }
 
 export function SaveTextFile(arg1, arg2, arg3) {

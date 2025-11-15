@@ -280,24 +280,58 @@ export const ShipSorting = () => {
         return key;
       };
 
-      const newItems: INIKeyValue[] = allItems.map(it => {
-        if (!it.key.toLowerCase().includes('vehicle_name')) return it;
-        const baseKey = toBase(it.key);
-        const { text: noNum } = stripPrefix(it.value);
-        const ord = orderMap.get(baseKey);
-        if (ord != null) {
-          return { key: it.key, value: `${pad3(ord)} ${noNum}` };
-        }
-        // 未排序：移除前綴
-        return { key: it.key, value: noNum };
-      });
+      // 先保存 active.json
+      const app: any = await import('../../wailsjs/go/main/App');
+      try { await app.SaveVehicleOrderActive(scPath, sortedBaseKeys); } catch {}
+      
+      // 使用後端的 ApplyActiveVehicleOrderToLocale 來確保語系檔正確更新
+      // 這樣可以確保邏輯與自動安裝流程一致
+      let localeFileUpdated = false;
+      try {
+        await app.ApplyActiveVehicleOrderToLocale(scPath, currentLocale);
+        // 重新讀取語系檔以更新顯示
+        const { ReadINIFile } = await import('../../wailsjs/go/main/App');
+        const updatedItems = await ReadINIFile(currentFilePath);
+        setAllItems(updatedItems);
+        localeFileUpdated = true;
+      } catch (e: any) {
+        // 如果後端方法失敗，回退到前端直接寫入的方式
+        const newItems: INIKeyValue[] = allItems.map(it => {
+          if (!it.key.toLowerCase().includes('vehicle_name')) return it;
+          const baseKey = toBase(it.key);
+          const { text: noNum } = stripPrefix(it.value);
+          const ord = orderMap.get(baseKey);
+          if (ord != null) {
+            return { key: it.key, value: `${pad3(ord)} ${noNum}` };
+          }
+          // 未排序：移除前綴
+          return { key: it.key, value: noNum };
+        });
 
-      const { WriteINIFile } = await import('../../wailsjs/go/main/App');
-      await WriteINIFile(currentFilePath, newItems);
-      setAllItems(newItems);
-      // 同步寫入 active.json（第一次儲存時會建立）
-      try { const app: any = await import('../../wailsjs/go/main/App'); await app.SaveVehicleOrderActive(scPath, sortedBaseKeys); } catch {}
-      setMessage({ type: 'success', text: '已儲存排序至語系檔。' });
+        const { WriteINIFile } = await import('../../wailsjs/go/main/App');
+        await WriteINIFile(currentFilePath, newItems);
+        setAllItems(newItems);
+        localeFileUpdated = true;
+      }
+      
+      // 如果語系檔更新成功，且當前編輯的語系是遊戲中正在使用的語系，自動套用到遊戲資料夾
+      if (localeFileUpdated && currentLocale && scPath && isPathValid) {
+        try {
+          const currentUserLanguage = await app.GetUserLanguage(scPath);
+          if (currentUserLanguage === currentLocale) {
+            setMessage({ type: 'info', text: '已儲存排序至語系檔。正在套用到遊戲資料夾...' });
+            await app.ApplyLocalLocaleToGame(scPath, currentLocale);
+            setMessage({ type: 'success', text: '已儲存排序並套用到遊戲資料夾。' });
+          } else {
+            setMessage({ type: 'success', text: '已儲存排序至語系檔。' });
+          }
+        } catch (e: any) {
+          // 如果套用失敗，仍然顯示儲存成功，但提示需要重新安裝
+          setMessage({ type: 'success', text: '已儲存排序至語系檔。請重新執行自動安裝以套用排序到遊戲。' });
+        }
+      } else if (localeFileUpdated) {
+        setMessage({ type: 'success', text: '已儲存排序至語系檔。' });
+      }
     } catch (e: any) {
       setMessage({ type: 'error', text: `儲存失敗：${e?.message || e}` });
     } finally {
@@ -441,18 +475,7 @@ export const ShipSorting = () => {
                   : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-500 hover:to-green-600 border-green-900/50'
               }`}
             >
-              {isSaving ? '儲存中...' : '💾 儲存'}
-            </button>
-            <button
-              onClick={() => setSaveAsOpen(true)}
-              disabled={isSaving || isLoading || !currentFilePath}
-              className={`px-3 py-2 text-sm rounded border ${
-                (isSaving || isLoading || !currentFilePath)
-                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
-                  : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
-              }`}
-            >
-              另存新檔
+              {isSaving ? '應用中...' : '應用排序'}
             </button>
           </div>
         </div>
@@ -557,6 +580,17 @@ export const ShipSorting = () => {
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-md font-bold text-orange-400">設定檔管理</h3>
             <div className="flex gap-2">
+              <button
+                onClick={() => setSaveAsOpen(true)}
+                disabled={isBusyProfiles || !isPathValid || sortedBaseKeys.length === 0}
+                className={`px-3 py-2 text-sm rounded border ${
+                  (isBusyProfiles || !isPathValid || sortedBaseKeys.length === 0)
+                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                    : 'bg-orange-600 text-white border-orange-500 hover:bg-orange-500'
+                }`}
+              >
+                另存新檔
+              </button>
               <button
                 onClick={async () => {
                   setIsBusyProfiles(true);
