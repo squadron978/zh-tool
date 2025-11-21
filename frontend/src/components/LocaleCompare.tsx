@@ -28,7 +28,8 @@ export const LocaleCompare = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [hasChineseLocale, setHasChineseLocale] = useState(false);
   const [compareStats, setCompareStats] = useState<{ currentCount: number; referenceCount: number } | null>(null);
-  const [compareMode, setCompareMode] = useState<'missing' | 'value' | 'duplicateKeys' | 'searchValue'>('missing');
+  const [compareMode, setCompareMode] = useState<'missing' | 'value' | 'duplicateKeys' | 'searchValue' | 'extraKeys'>('missing');
+  const [isDeleting, setIsDeleting] = useState(false);
   const [duplicateRows, setDuplicateRows] = useState<DuplicateRow[]>([]);
   const [deletingLine, setDeletingLine] = useState<number | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<DuplicateRow | null>(null);
@@ -61,6 +62,16 @@ export const LocaleCompare = () => {
     window.addEventListener('resize', calculateHeight);
     return () => window.removeEventListener('resize', calculateHeight);
   }, []);
+
+  // 正規化鍵名：不分大小寫，忽略 ",P" 後綴
+  const normalizeKeyForCompare = (key: string): string => {
+    let normalized = key.toLowerCase();
+    // 移除 ",P" 或 ",p" 後綴
+    if (normalized.endsWith(',p')) {
+      normalized = normalized.slice(0, -2);
+    }
+    return normalized;
+  };
 
   // 用於比對時的字串正規化：
   // - 標準化換行為 \n
@@ -187,7 +198,7 @@ export const LocaleCompare = () => {
       setMessage({ type: 'error', text: '找不到當前語系檔案' });
       return;
     }
-    if ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) {
+    if ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue' || compareMode === 'extraKeys') && !referenceFilePath) {
       setMessage({ type: 'error', text: '請先選擇參考檔案' });
       return;
     }
@@ -209,8 +220,8 @@ export const LocaleCompare = () => {
         : await Promise.all([
             ReadINIFile(currentFilePath),
             ReadINIFile(referenceFilePath),
-            CompareINIFiles(currentFilePath, referenceFilePath)
-          ]);
+            compareMode === 'extraKeys' ? Promise.resolve([]) : CompareINIFiles(currentFilePath, referenceFilePath)
+          ]) as [INIKeyValue[], INIKeyValue[], INIKeyValue[]];
 
       // 設定統計資訊
       setCompareStats({
@@ -221,23 +232,36 @@ export const LocaleCompare = () => {
       // 依模式建立差異清單
       let differences: INIKeyValue[] = [];
       const currentMap = new Map<string, string>((currentItems || []).map((it: INIKeyValue) => [it.key, it.value]));
+      const referenceMap = new Map<string, string>((referenceItems || []).map((it: INIKeyValue) => [it.key, it.value]));
+      
       if (compareMode === 'duplicateKeys') {
         // 找出重複鍵，並記錄每列的行數（以解析結果順序為準）
-        const keyToRows = new Map<string, DuplicateRow[]>();
+        // 正規化鍵名：不分大小寫，忽略 ",P" 後綴
+        const normalizeKeyForDuplicate = (key: string): string => {
+          let normalized = key.toLowerCase();
+          // 移除 ",P" 或 ",p" 後綴
+          if (normalized.endsWith(',p')) {
+            normalized = normalized.slice(0, -2);
+          }
+          return normalized;
+        };
+        
+        const normalizedKeyToRows = new Map<string, DuplicateRow[]>();
         (currentItems || []).forEach((it: INIKeyValue, idx: number) => {
-          const arr = keyToRows.get(it.key) || [];
+          const normalizedKey = normalizeKeyForDuplicate(it.key);
+          const arr = normalizedKeyToRows.get(normalizedKey) || [];
           arr.push({ key: it.key, value: it.value, lineNumber: idx + 1 });
-          keyToRows.set(it.key, arr);
+          normalizedKeyToRows.set(normalizedKey, arr);
         });
         const dups: DuplicateRow[] = [];
-        keyToRows.forEach((rows) => {
+        normalizedKeyToRows.forEach((rows) => {
           if (rows.length > 1) {
             dups.push(...rows);
           }
         });
         setDuplicateRows(dups);
         if (dups.length > 0) {
-          setMessage({ type: 'info', text: `找到 ${dups.length} 列重複鍵（含同鍵的所有出現列）` });
+          setMessage({ type: 'info', text: `找到 ${dups.length} 列重複鍵（含同鍵的所有出現列，不分大小寫且忽略 ,P 後綴）` });
         } else {
           setMessage({ type: 'success', text: '沒有重複鍵！' });
         }
@@ -247,21 +271,66 @@ export const LocaleCompare = () => {
         setSelectedKeys({});
         setSelectAll(false);
         return;
+      } else if (compareMode === 'extraKeys') {
+        // 找出當前檔案中多出的鍵（在參考檔案中不存在的，使用正規化比對）
+        // 建立參考檔案的正規化鍵 Set（提高查找效率）
+        const normalizedRefKeys = new Set<string>();
+        (referenceItems || []).forEach((ref: INIKeyValue) => {
+          const normalizedRefKey = normalizeKeyForCompare(ref.key);
+          normalizedRefKeys.add(normalizedRefKey);
+        });
+        
+        // 檢查當前檔案的每個鍵
+        (currentItems || []).forEach((cur: INIKeyValue) => {
+          const normalizedCurKey = normalizeKeyForCompare(cur.key);
+          if (!normalizedRefKeys.has(normalizedCurKey)) {
+            differences.push({ key: cur.key, value: cur.value });
+          }
+        });
+      } else if (compareMode === 'missing') {
+        // 找出參考檔案中有但當前檔案中缺失的鍵（使用正規化比對）
+        // 建立當前檔案的正規化鍵 Set（提高查找效率）
+        const normalizedCurKeys = new Set<string>();
+        (currentItems || []).forEach((cur: INIKeyValue) => {
+          const normalizedCurKey = normalizeKeyForCompare(cur.key);
+          normalizedCurKeys.add(normalizedCurKey);
+        });
+        
+        // 檢查參考檔案的每個鍵
+        (referenceItems || []).forEach((ref: INIKeyValue) => {
+          const normalizedRefKey = normalizeKeyForCompare(ref.key);
+          if (!normalizedCurKeys.has(normalizedRefKey)) {
+            differences.push({ key: ref.key, value: ref.value });
+          }
+        });
       } else if (compareMode === 'value' || compareMode === 'searchValue') {
-        const referenceMap = new Map<string, string>((referenceItems || []).map((it: INIKeyValue) => [it.key, it.value]));
         const currentMapForValue = new Map<string, string>((currentItems || []).map((it: INIKeyValue) => [it.key, it.value]));
         const q = normalizeForCompare(searchQuery).toLowerCase();
 
         if (compareMode === 'value') {
-          // 只列出「不同值」的項目（僅針對同時存在於兩邊的鍵）
+          // 只列出「不同值」的項目（僅針對同時存在於兩邊的鍵，使用正規化比對）
+          // 建立參考檔案的正規化鍵到原始項目的映射（提高查找效率）
+          const normalizedRefMap = new Map<string, INIKeyValue>();
+          const refItemsArray: INIKeyValue[] = Array.isArray(referenceItems) ? referenceItems : [];
+          refItemsArray.forEach((ref: INIKeyValue) => {
+            const normalizedRefKey = normalizeKeyForCompare(ref.key);
+            // 如果已經有相同的正規化鍵，保留第一個
+            if (!normalizedRefMap.has(normalizedRefKey)) {
+              normalizedRefMap.set(normalizedRefKey, ref);
+            }
+          });
+          
+          // 檢查當前檔案的每個鍵
           (currentItems || []).forEach((cur: INIKeyValue) => {
-            const refVal = referenceMap.get(cur.key);
-            if (typeof refVal === 'string') {
-              const nRef = normalizeForCompare(refVal);
+            const normalizedCurKey = normalizeKeyForCompare(cur.key);
+            const refItem = normalizedRefMap.get(normalizedCurKey);
+            
+            if (refItem) {
+              const nRef = normalizeForCompare(refItem.value);
               const nCur = normalizeForCompare(cur.value);
               const isDiff = nRef !== nCur;
               if (isDiff) {
-                differences.push({ key: cur.key, value: refVal });
+                differences.push({ key: cur.key, value: refItem.value });
               }
             }
           });
@@ -303,20 +372,31 @@ export const LocaleCompare = () => {
         const initialValues: { [key: string]: string } = {};
         const initialSelected: { [key: string]: boolean } = {};
         differences.forEach((item) => {
-          initialValues[item.key] = (compareMode === 'value' || compareMode === 'searchValue') ? (currentMap.get(item.key) || '') : item.value;
+          if (compareMode === 'extraKeys') {
+            // extraKeys 模式：顯示當前檔案的值
+            initialValues[item.key] = item.value;
+          } else if (compareMode === 'value' || compareMode === 'searchValue') {
+            // value/searchValue 模式：顯示原檔案的值
+            initialValues[item.key] = currentMap.get(item.key) || '';
+          } else {
+            // missing 模式：預設為參考檔案值
+            initialValues[item.key] = item.value;
+          }
           // 預設不全選
           initialSelected[item.key] = false;
         });
         setEditedValues(initialValues);
         setSelectedKeys(initialSelected);
         setSelectAll(false);
-        setMessage({ type: 'info', text: `找到 ${differences.length} 個${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合搜尋' : '缺少'}的項目` });
+        const modeText = compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合搜尋' : compareMode === 'extraKeys' ? '多出' : '缺少';
+        setMessage({ type: 'info', text: `找到 ${differences.length} 個${modeText}的項目` });
       } else {
         setMissingKeys([]);
         setEditedValues({});
         setSelectedKeys({});
         setSelectAll(false);
-        setMessage({ type: 'success', text: `沒有${compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合條件且不同' : '缺少的項目'}，兩個檔案完全一致！` });
+        const modeText = compareMode === 'value' ? '差異' : compareMode === 'searchValue' ? '符合條件且不同' : compareMode === 'extraKeys' ? '多出的項目' : '缺少的項目';
+        setMessage({ type: 'success', text: `沒有${modeText}，兩個檔案完全一致！` });
       }
     } catch (e: any) {
       setMessage({ type: 'error', text: `比對失敗：${e?.message || e}` });
@@ -391,6 +471,48 @@ export const LocaleCompare = () => {
     }
   };
 
+  // 移除多出的鍵
+  const handleDeleteExtraKeys = async () => {
+    if (!currentFilePath || missingKeys.length === 0) {
+      return;
+    }
+
+    // 只移除已勾選的項目
+    const selectedItems = missingKeys.filter((item) => selectedKeys[item.key]);
+    if (selectedItems.length === 0) {
+      setMessage({ type: 'error', text: '請至少勾選一個項目' });
+      return;
+    }
+
+    setIsDeleting(true);
+    setMessage(null);
+
+    try {
+      const { ReadINIFile, WriteINIFile } = await import('../../wailsjs/go/main/App');
+      
+      // 讀取當前檔案
+      const currentItems = await ReadINIFile(currentFilePath) as INIKeyValue[];
+      
+      // 建立要刪除的鍵集合
+      const keysToDelete = new Set(selectedItems.map(item => item.key));
+      
+      // 過濾掉要刪除的鍵
+      const newItems = currentItems.filter((item) => !keysToDelete.has(item.key));
+      
+      // 寫回檔案
+      await WriteINIFile(currentFilePath, newItems);
+      
+      setMessage({ type: 'success', text: `成功移除 ${selectedItems.length} 個多出的鍵` });
+      
+      // 重新比對以刷新結果
+      await handleCompare();
+    } catch (e: any) {
+      setMessage({ type: 'error', text: `移除失敗：${e?.message || e}` });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // 匯出為檔案
   const handleExport = async () => {
     if (missingKeys.length === 0) {
@@ -435,7 +557,7 @@ export const LocaleCompare = () => {
   };
 
   // 虛擬滾動計算
-  // 篩選結果（差異/缺失列表）
+  // 篩選結果（差異/缺失/多出列表）
   const filteredDiffItems = useMemo(() => {
     if (compareMode === 'duplicateKeys') return [] as INIKeyValue[];
     const kw = resultSearchKeyword.trim().toLowerCase();
@@ -590,6 +712,12 @@ export const LocaleCompare = () => {
               只比對缺失鍵
             </button>
             <button
+              onClick={() => setCompareMode('extraKeys')}
+              className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'extraKeys' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >
+              只比對多出鍵
+            </button>
+            <button
               onClick={() => setCompareMode('value')}
               className={`px-3 py-1.5 border-l border-gray-700 ${compareMode === 'value' ? 'bg-orange-900/40 text-orange-300' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
             >
@@ -621,9 +749,9 @@ export const LocaleCompare = () => {
           )}
           <button
             onClick={handleCompare}
-            disabled={!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing}
+            disabled={!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue' || compareMode === 'extraKeys') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing}
             className={`px-4 py-3 rounded-lg font-medium border transition ${
-              (!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing)
+              (!currentFilePath || ((compareMode === 'missing' || compareMode === 'value' || compareMode === 'searchValue' || compareMode === 'extraKeys') && !referenceFilePath) || (compareMode === 'searchValue' && !searchQuery.trim()) || isComparing)
                 ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
                 : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-500 hover:to-red-500 border-orange-900/50'
             }`}
@@ -650,7 +778,11 @@ export const LocaleCompare = () => {
             )}
             <div className="bg-black/40 border border-gray-700 rounded p-3">
               <div className="text-xs text-gray-400 mb-1">{
-                compareMode === 'duplicateKeys' ? '重複列數' : (compareMode === 'value' ? '差異的項目數' : (compareMode === 'searchValue' ? '符合搜尋的項目數' : '缺少的項目數'))
+                compareMode === 'duplicateKeys' ? '重複列數' : 
+                compareMode === 'value' ? '差異的項目數' : 
+                compareMode === 'searchValue' ? '符合搜尋的項目數' : 
+                compareMode === 'extraKeys' ? '多出的項目數' : 
+                '缺少的項目數'
               }</div>
               <div className="text-xl font-bold text-red-400">{compareMode === 'duplicateKeys' ? duplicateRows.length : missingKeys.length}</div>
             </div>
@@ -663,7 +795,10 @@ export const LocaleCompare = () => {
         <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-md font-bold text-orange-400">
-              {compareMode === 'value' ? '差異的項目' : compareMode === 'searchValue' ? '符合搜尋的項目' : '缺少的項目'} ({filteredDiffItems.filter(item => selectedKeys[item.key]).length}/{filteredDiffItems.length} 已選)
+              {compareMode === 'value' ? '差異的項目' : 
+               compareMode === 'searchValue' ? '符合搜尋的項目' : 
+               compareMode === 'extraKeys' ? '多出的項目' : 
+               '缺少的項目'} ({filteredDiffItems.filter(item => selectedKeys[item.key]).length}/{filteredDiffItems.length} 已選)
             </h3>
             <div className="flex gap-2">
               {compareMode !== 'searchValue' && (
@@ -681,6 +816,19 @@ export const LocaleCompare = () => {
               >
                 {selectAll ? '取消全選' : '全選'}
               </button>
+              {compareMode === 'extraKeys' && (
+                <button
+                  onClick={handleDeleteExtraKeys}
+                  disabled={isDeleting || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                    (isDeleting || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                      : 'bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-500 hover:to-red-600 border-red-900/50'
+                  }`}
+                >
+                  {isDeleting ? '移除中...' : '移除選中項目'}
+                </button>
+              )}
               <button
                 onClick={handleExport}
                 disabled={isExporting || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
@@ -692,17 +840,19 @@ export const LocaleCompare = () => {
               >
                 {isExporting ? '匯出中...' : '匯出為檔案'}
               </button>
-              <button
-                onClick={handleSave}
-                disabled={isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
-                className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
-                  (isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
-                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
-                    : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-500 hover:to-green-600 border-green-900/50'
-                }`}
-              >
-                {isSaving ? '儲存中...' : '批次更新'}
-              </button>
+              {compareMode !== 'extraKeys' && (
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                    (isSaving || missingKeys.filter(item => selectedKeys[item.key]).length === 0)
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                      : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-500 hover:to-green-600 border-green-900/50'
+                  }`}
+                >
+                  {isSaving ? '儲存中...' : '批次更新'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -717,9 +867,11 @@ export const LocaleCompare = () => {
                 <tr className="border-b border-gray-700">
                   <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 w-12">選取</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '25%' }}>Key</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>參考檔案的值</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>
-                    {(compareMode === 'value' || compareMode === 'searchValue') ? '原檔案的值' : '新的值'}
+                  {compareMode !== 'extraKeys' && (
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '35%' }}>參考檔案的值</th>
+                  )}
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: compareMode === 'extraKeys' ? '70%' : '35%' }}>
+                    {compareMode === 'extraKeys' ? '當前檔案的值' : (compareMode === 'value' || compareMode === 'searchValue') ? '原檔案的值' : '新的值'}
                   </th>
                 </tr>
               </thead>
@@ -727,7 +879,7 @@ export const LocaleCompare = () => {
                 {/* 上方間隔（維持捲動位置） */}
                 {visibleRange.startIndex > 0 && (
                   <tr key="spacer-top">
-                    <td colSpan={4} style={{ height: visibleRange.startIndex * ROW_HEIGHT }} />
+                    <td colSpan={compareMode === 'extraKeys' ? 3 : 4} style={{ height: visibleRange.startIndex * ROW_HEIGHT }} />
                   </tr>
                 )}
                 {visibleItems.map((item, i) => (
@@ -745,22 +897,24 @@ export const LocaleCompare = () => {
                     <td className="px-3 py-3 align-top">
                       <div className="text-xs text-orange-300 font-mono break-all">{item.key}</div>
                     </td>
+                    {compareMode !== 'extraKeys' && (
+                      <td className="px-3 py-3 align-top">
+                        <textarea
+                          value={item.value}
+                          readOnly
+                          rows={3}
+                          className="w-full px-2 py-1 text-xs border rounded bg-gray-900/50 text-gray-400 border-gray-700 font-mono resize-none"
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-3 align-top">
                       <textarea
-                        value={item.value}
-                        readOnly
-                        rows={3}
-                        className="w-full px-2 py-1 text-xs border rounded bg-gray-900/50 text-gray-400 border-gray-700 font-mono resize-none"
-                      />
-                    </td>
-                    <td className="px-3 py-3 align-top">
-                      <textarea
-                        value={editedValues[item.key] || ''}
+                        value={editedValues[item.key] || (compareMode === 'extraKeys' ? item.value : '')}
                         onChange={(e) => setEditedValues({ ...editedValues, [item.key]: e.target.value })}
-                        readOnly={false}
+                        readOnly={compareMode === 'extraKeys'}
                         rows={3}
-                        placeholder={(compareMode === 'value' || compareMode === 'searchValue') ? '可直接編輯原檔值...' : '輸入翻譯內容...'}
-                        className={`w-full px-2 py-1 text-xs border rounded font-mono resize-y bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none`}
+                        placeholder={compareMode === 'extraKeys' ? '' : (compareMode === 'value' || compareMode === 'searchValue') ? '可直接編輯原檔值...' : '輸入翻譯內容...'}
+                        className={`w-full px-2 py-1 text-xs border rounded font-mono resize-y ${compareMode === 'extraKeys' ? 'bg-gray-900/50 text-gray-400 border-gray-700' : 'bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none'}`}
                       />
                     </td>
                   </tr>
@@ -768,7 +922,7 @@ export const LocaleCompare = () => {
                 {/* 下方間隔 */}
                 {visibleRange.endIndex < filteredDiffItems.length && (
                   <tr key="spacer-bottom">
-                    <td colSpan={4} style={{ height: (filteredDiffItems.length - visibleRange.endIndex) * ROW_HEIGHT }} />
+                    <td colSpan={compareMode === 'extraKeys' ? 3 : 4} style={{ height: (filteredDiffItems.length - visibleRange.endIndex) * ROW_HEIGHT }} />
                   </tr>
                 )}
               </tbody>

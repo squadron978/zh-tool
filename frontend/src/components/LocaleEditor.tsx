@@ -15,12 +15,14 @@ const TableRow = memo(({
   index, 
   item, 
   value, 
-  onValueChange 
+  onValueChange,
+  onDelete
 }: { 
   index: number; 
   item: INIKeyValue; 
   value: string;
   onValueChange: (key: string, newValue: string) => void;
+  onDelete: (key: string) => void;
 }) => {
   return (
     <tr className="border-b border-gray-800 hover:bg-gray-900/30">
@@ -37,6 +39,14 @@ const TableRow = memo(({
           rows={2}
           className="w-full px-2 py-1 text-xs border rounded bg-black/50 text-gray-300 border-gray-600 focus:border-orange-500 focus:outline-none font-mono resize-y"
         />
+      </td>
+      <td className="px-3 py-3 align-top">
+        <button
+          onClick={() => onDelete(item.key)}
+          className="px-3 py-1.5 rounded text-xs font-medium border transition bg-red-900/30 text-red-300 border-red-900/50 hover:bg-red-900/40"
+        >
+          刪除
+        </button>
       </td>
     </tr>
   );
@@ -64,6 +74,12 @@ export const LocaleEditor = () => {
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
   const [replaceInSearchOnly, setReplaceInSearchOnly] = useState(true);
+  
+  // 新增項目功能狀態
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
   
   // 資料是否已載入
   const [isDataLoaded, setIsDataLoaded] = useState(false);
@@ -260,6 +276,64 @@ export const LocaleEditor = () => {
       type: 'success', 
       text: `已取代 ${replacedCount} 個項目${replaceInSearchOnly ? '（限搜尋結果）' : '（所有項目）'}` 
     });
+  };
+
+  // 新增項目
+  const handleAddItem = () => {
+    if (!newKey.trim()) {
+      setMessage({ type: 'error', text: '請輸入 Key' });
+      return;
+    }
+    
+    // 檢查是否已存在相同的 key
+    if (allItems.some(item => item.key === newKey.trim())) {
+      setMessage({ type: 'error', text: `Key "${newKey.trim()}" 已存在` });
+      return;
+    }
+
+    const newItem: INIKeyValue = {
+      key: newKey.trim(),
+      value: newValue.trim()
+    };
+
+    // 添加到 allItems
+    const updatedItems = [...allItems, newItem];
+    setAllItems(updatedItems);
+    
+    // 添加到 editedValues
+    setEditedValues(prev => ({
+      ...prev,
+      [newItem.key]: newItem.value
+    }));
+
+    // 清除表單
+    setNewKey('');
+    setNewValue('');
+    setShowAddPanel(false);
+    
+    setMessage({ type: 'success', text: `已新增項目：${newItem.key}` });
+  };
+
+  // 刪除項目
+  const handleDeleteItem = (key: string) => {
+    setConfirmDeleteKey(key);
+  };
+
+  // 確認刪除
+  const handleConfirmDelete = () => {
+    if (!confirmDeleteKey) return;
+
+    // 從 allItems 中移除
+    const updatedItems = allItems.filter(item => item.key !== confirmDeleteKey);
+    setAllItems(updatedItems);
+    
+    // 從 editedValues 中移除
+    const newEditedValues = { ...editedValues };
+    delete newEditedValues[confirmDeleteKey];
+    setEditedValues(newEditedValues);
+
+    setMessage({ type: 'success', text: `已刪除項目：${confirmDeleteKey}` });
+    setConfirmDeleteKey(null);
   };
 
   // 儲存檔案
@@ -508,6 +582,12 @@ export const LocaleEditor = () => {
                 >
                   取代
                 </button>
+                <button
+                  onClick={() => setShowAddPanel(!showAddPanel)}
+                  className="px-3 py-2 text-sm rounded border bg-green-900/30 text-green-300 border-green-900/50 hover:bg-green-900/40"
+                >
+                  ➕ 新增
+                </button>
               </div>
             </div>
           </div>
@@ -562,6 +642,68 @@ export const LocaleEditor = () => {
               </div>
             </div>
           )}
+
+          {/* 新增項目面板 */}
+          {showAddPanel && (
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <h4 className="text-sm font-bold text-green-400 mb-3">新增項目</h4>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Key <span className="text-red-400">*</span></label>
+                  <input
+                    type="text"
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    placeholder="輸入新的 Key..."
+                    className="w-full px-3 py-2 text-sm border rounded bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 focus:border-green-500 focus:outline-none font-mono"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        handleAddItem();
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Value</label>
+                  <input
+                    type="text"
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    placeholder="輸入新的 Value..."
+                    className="w-full px-3 py-2 text-sm border rounded bg-black/50 text-gray-300 placeholder-gray-600 border-gray-700 focus:border-green-500 focus:outline-none"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        handleAddItem();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={handleAddItem}
+                  disabled={!newKey.trim()}
+                  className={`px-4 py-2 text-sm rounded border transition ${
+                    !newKey.trim()
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'
+                      : 'bg-green-600 text-white border-green-500 hover:bg-green-500'
+                  }`}
+                >
+                  新增項目
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddPanel(false);
+                    setNewKey('');
+                    setNewValue('');
+                  }}
+                  className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -601,11 +743,14 @@ export const LocaleEditor = () => {
                   <thead className="sticky top-0 bg-gray-900 z-10">
                     <tr className="border-b border-gray-700">
                       <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 w-8">#</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '30%' }}>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '25%' }}>
                         Key
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '70%' }}>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '60%' }}>
                         Value
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400" style={{ width: '15%' }}>
+                        操作
                       </th>
                     </tr>
                   </thead>
@@ -619,6 +764,7 @@ export const LocaleEditor = () => {
                         item={item}
                         value={editedValues[item.key] || ''}
                         onValueChange={handleValueChange}
+                        onDelete={handleDeleteItem}
                       />
                     );
                   })}
@@ -674,6 +820,33 @@ export const LocaleEditor = () => {
               清除搜尋
             </button>
           )}
+        </div>
+      )}
+
+      {/* 確認刪除對話框 */}
+      {confirmDeleteKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmDeleteKey(null)} />
+          <div className="relative bg-gradient-to-br from-gray-900 to-black text-gray-200 px-6 py-5 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-orange-900/50 w-full max-w-md">
+            <h4 className="text-lg font-bold text-orange-400 mb-2">確認刪除</h4>
+            <div className="text-sm text-gray-300 mb-4">
+              確定要刪除項目 <span className="text-orange-300 font-semibold font-mono">{confirmDeleteKey}</span> 嗎？
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteKey(null)}
+                className="px-4 py-2 text-sm rounded border bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-sm rounded border bg-red-700/80 text-white border-red-900/60 hover:bg-red-700"
+              >
+                確定刪除
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

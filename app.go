@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 	"syscall"
+	"time"
 	"unsafe"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -202,7 +202,6 @@ func (a *App) getLogicalDrives() []string {
 	return drives
 }
 
-
 // SaveStarCitizenPath 保存 Star Citizen 路徑到配置文件
 func (a *App) SaveStarCitizenPath(path string) error {
 	if path == "" {
@@ -322,31 +321,33 @@ func (a *App) ValidateStarCitizenPath(path string) bool {
 
 // GetLocalizationPath 獲取中文化檔案應該放置的路徑（已改為本機資料夾）
 func (a *App) GetLocalizationPath(scPath string) string {
-    return getLocalLocalizationBase()
+	return getLocalLocalizationBase()
 }
 
 // ListInstalledLocalizations 列出目前可能已安裝的語系資料夾名稱（去重）
 func (a *App) ListInstalledLocalizations(scPath string) []string {
-    base := getLocalLocalizationBase()
-    entries, err := os.ReadDir(base)
-    if err != nil {
-        return []string{}
-    }
-    var result []string
-    for _, e := range entries {
-        if e.IsDir() {
-            name := e.Name()
-            if strings.HasPrefix(name, ".") { continue }
-            result = append(result, name)
-        }
-    }
-    return result
+	base := getLocalLocalizationBase()
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return []string{}
+	}
+	var result []string
+	for _, e := range entries {
+		if e.IsDir() {
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 // CheckLocalizationExists 檢查中文化檔案是否已存在
 func (a *App) CheckLocalizationExists(scPath string) bool {
-    locBase := getLocalLocalizationBase()
-    entries, err := os.ReadDir(locBase)
+	locBase := getLocalLocalizationBase()
+	entries, err := os.ReadDir(locBase)
 	if err != nil {
 		return false
 	}
@@ -354,8 +355,8 @@ func (a *App) CheckLocalizationExists(scPath string) bool {
 		if !e.IsDir() {
 			continue
 		}
-        name := strings.ToLower(e.Name())
-        if strings.Contains(name, "chinese_(traditional)") || strings.Contains(name, "chinese_(simplified)") || strings.Contains(name, "chinese") || strings.Contains(name, "zh") {
+		name := strings.ToLower(e.Name())
+		if strings.Contains(name, "chinese_(traditional)") || strings.Contains(name, "chinese_(simplified)") || strings.Contains(name, "chinese") || strings.Contains(name, "zh") {
 			return true
 		}
 	}
@@ -364,18 +365,18 @@ func (a *App) CheckLocalizationExists(scPath string) bool {
 
 // CreateLocalizationDir 創建中文化目錄
 func (a *App) CreateLocalizationDir(scPath string) error {
-    // 建立本機 Localization 基底資料夾
-    base := getLocalLocalizationBase()
-    return os.MkdirAll(base, 0755)
+	// 建立本機 Localization 基底資料夾
+	base := getLocalLocalizationBase()
+	return os.MkdirAll(base, 0755)
 }
 
 // HasLocalizationBase 檢查是否存在 Localization 基底資料夾
 func (a *App) HasLocalizationBase(scPath string) bool {
-    base := getLocalLocalizationBase()
-    if _, err := os.Stat(base); err == nil {
-        return true
-    }
-    return false
+	base := getLocalLocalizationBase()
+	if _, err := os.Stat(base); err == nil {
+		return true
+	}
+	return false
 }
 
 // DownloadAndInstallLocalization 從指定 URL 下載 global.ini 並安裝到 LIVE/Localization/chinese_tranditional
@@ -413,7 +414,7 @@ func (a *App) DownloadAndInstallLocalization(scPath string, url string) (string,
 	return targetFile, nil
 }
 
-// SetUserLanguage 設定使用者語系：在 <scPath>/LIVE/data/system.cfg 寫入 sys_languages 與 g_language（若檔案不存在則建立）
+// SetUserLanguage 設定使用者語系：在 <scPath>/LIVE/data/system.cfg 和 user.cfg 寫入 sys_languages 與 g_language（若檔案不存在則建立）
 func (a *App) SetUserLanguage(scPath string, locale string) (string, error) {
 	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
 		return "", fmt.Errorf("invalid Star Citizen path")
@@ -427,23 +428,40 @@ func (a *App) SetUserLanguage(scPath string, locale string) (string, error) {
 		return "", fmt.Errorf("LIVE directory not found")
 	}
 
-	cfgPath := filepath.Join(liveDir, "system.cfg")
+	systemCfgPath := filepath.Join(liveDir, "system.cfg")
+	userCfgPath := filepath.Join(scPath, "LIVE", "user.cfg")
 	desiredLangLine := "g_language=" + locale
 	desiredSysLangLine := "sys_languages=" + locale
 
+	// 寫入 system.cfg
+	content, err := a.updateOrCreateCfgFile(systemCfgPath, desiredLangLine, desiredSysLangLine)
+	if err != nil {
+		return "", fmt.Errorf("write system.cfg failed: %w", err)
+	}
+
+	// 寫入 user.cfg（相同內容）
+	if err := os.WriteFile(userCfgPath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("write user.cfg failed: %w", err)
+	}
+
+	return systemCfgPath, nil
+}
+
+// updateOrCreateCfgFile 更新或建立配置檔案，回傳最終內容
+func (a *App) updateOrCreateCfgFile(cfgPath, desiredLangLine, desiredSysLangLine string) (string, error) {
 	// 如果不存在就直接建立
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		content := desiredSysLangLine + "\n" + desiredLangLine + "\n" + "g_languageAudio=english\n"
 		if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-			return "", fmt.Errorf("create user.cfg failed: %w", err)
+			return "", err
 		}
-		return cfgPath, nil
+		return content, nil
 	}
 
 	// 讀取並更新
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return "", fmt.Errorf("read user.cfg failed: %w", err)
+		return "", err
 	}
 	lines := strings.Split(string(data), "\n")
 	foundLang := false
@@ -466,9 +484,9 @@ func (a *App) SetUserLanguage(scPath string, locale string) (string, error) {
 	}
 	updated := strings.Join(lines, "\n")
 	if err := os.WriteFile(cfgPath, []byte(updated), 0644); err != nil {
-		return "", fmt.Errorf("write user.cfg failed: %w", err)
+		return "", err
 	}
-	return cfgPath, nil
+	return updated, nil
 }
 
 // GetUserLanguage 讀取 <scPath>/LIVE/data/system.cfg 的 g_language 值，若不存在或讀取失敗回傳空字串
@@ -746,12 +764,12 @@ func (a *App) GetCurrentLocaleINIPath(scPath string) (string, error) {
 	if currentLocale == "" {
 		return "", fmt.Errorf("no locale configured")
 	}
-    // 改為本機儲存路徑
-    iniPath := filepath.Join(getLocalLocalizationBase(), currentLocale, "global.ini")
-    if _, err := os.Stat(iniPath); err == nil {
-        return iniPath, nil
-    }
-    return "", fmt.Errorf("locale ini file not found for: %s", currentLocale)
+	// 改為本機儲存路徑
+	iniPath := filepath.Join(getLocalLocalizationBase(), currentLocale, "global.ini")
+	if _, err := os.Stat(iniPath); err == nil {
+		return iniPath, nil
+	}
+	return "", fmt.Errorf("locale ini file not found for: %s", currentLocale)
 }
 
 // SaveFile 開啟另存為對話框，回傳使用者選擇的完整檔案路徑
@@ -805,7 +823,7 @@ func (a *App) ExportLocaleFile(scPath string, localeName string, destFile string
 		return fmt.Errorf("invalid destination path")
 	}
 
-    src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
+	src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
 	if src == "" {
 		return fmt.Errorf("global.ini not found for locale: %s", localeName)
 	}
@@ -830,7 +848,7 @@ func (a *App) ExportLocaleFileStripped(scPath string, localeName string, destFil
 	}
 
 	// 尋找來源檔案（LIVE / PTU / EPTU）
-    src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
+	src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
 	if src == "" {
 		return fmt.Errorf("global.ini not found for locale: %s", localeName)
 	}
@@ -894,24 +912,24 @@ func (a *App) ExportLocaleFileStripped(scPath string, localeName string, destFil
 
 // GetSortBasePath 回傳與 Localization 同層的 Sort 目錄路徑（優先回傳存在的版本目錄）
 func (a *App) GetSortBasePath(scPath string) string {
-    // 改存放於使用者本機資料夾，避免寫入 Program Files 需提權
-    base := getLocalDataBase()
-    return filepath.Join(base, "Sort")
+	// 改存放於使用者本機資料夾，避免寫入 Program Files 需提權
+	base := getLocalDataBase()
+	return filepath.Join(base, "Sort")
 }
 
 // EnsureSortDirs 確保 Sort 與 Sort/save 目錄存在
 func (a *App) EnsureSortDirs(scPath string) (string, string, error) {
-    base := a.GetSortBasePath(scPath)
-    if err := os.MkdirAll(base, 0755); err != nil {
-        return "", "", err
-    }
-    save := filepath.Join(base, "save")
-    if err := os.MkdirAll(save, 0755); err != nil {
-        return "", "", err
-    }
-    // 嘗試從舊位置遷移（僅第一次，若新位置為空）
-    _ = migrateSortDataIfNeeded(scPath, base)
-    return base, save, nil
+	base := a.GetSortBasePath(scPath)
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", "", err
+	}
+	save := filepath.Join(base, "save")
+	if err := os.MkdirAll(save, 0755); err != nil {
+		return "", "", err
+	}
+	// 嘗試從舊位置遷移（僅第一次，若新位置為空）
+	_ = migrateSortDataIfNeeded(scPath, base)
+	return base, save, nil
 }
 
 type VehicleOrder struct {
@@ -995,23 +1013,23 @@ func (a *App) GetActiveVehicleOrder(scPath string) ([]string, error) {
 
 // getLocaleINIPath 找出特定語系名稱的 global.ini 路徑
 func (a *App) getLocaleINIPath(scPath, localeName string) (string, error) {
-    p := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
-    if _, err := os.Stat(p); err == nil {
-        return p, nil
-    }
-    return "", fmt.Errorf("global.ini not found for locale: %s", localeName)
+	p := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
+	if _, err := os.Stat(p); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("global.ini not found for locale: %s", localeName)
 }
 
 // GetLocalLocaleINIPath 回傳本機儲存區指定語系的 global.ini 路徑
 func (a *App) GetLocalLocaleINIPath(localeName string) (string, error) {
-    if strings.TrimSpace(localeName) == "" {
-        return "", fmt.Errorf("invalid locale name")
-    }
-    p := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
-    if _, err := os.Stat(p); err == nil {
-        return p, nil
-    }
-    return "", fmt.Errorf("local locale ini not found: %s", localeName)
+	if strings.TrimSpace(localeName) == "" {
+		return "", fmt.Errorf("invalid locale name")
+	}
+	p := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
+	if _, err := os.Stat(p); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("local locale ini not found: %s", localeName)
 }
 
 // makeBaseKey 與前端一致：_short,p -> ,P；_short -> 去除；其他維持
@@ -1036,7 +1054,7 @@ func stripPrefix(val string) string {
 
 // ApplyActiveVehicleOrderToLocale 讀取 active.json，將排序套用到指定語系檔（存在於清單者加 NNN 前綴，其他移除）
 func (a *App) ApplyActiveVehicleOrderToLocale(scPath, localeName string) error {
-    if strings.TrimSpace(localeName) == "" {
+	if strings.TrimSpace(localeName) == "" {
 		return fmt.Errorf("invalid params")
 	}
 	// 取得 active baseKeys
@@ -1045,7 +1063,7 @@ func (a *App) ApplyActiveVehicleOrderToLocale(scPath, localeName string) error {
 		// 無排序即不動
 		return nil
 	}
-    iniPath, err := a.getLocaleINIPath(scPath, localeName)
+	iniPath, err := a.getLocaleINIPath(scPath, localeName)
 	if err != nil {
 		return err
 	}
@@ -1081,14 +1099,14 @@ func (a *App) ApplyActiveVehicleOrderToLocale(scPath, localeName string) error {
 
 // StripActiveVehicleOrderFromLocale 讀取 active.json，僅對其中 baseKeys 的載具移除前綴
 func (a *App) StripActiveVehicleOrderFromLocale(scPath, localeName string) error {
-    if strings.TrimSpace(localeName) == "" {
+	if strings.TrimSpace(localeName) == "" {
 		return fmt.Errorf("invalid params")
 	}
-    baseKeys, _ := a.GetActiveVehicleOrder(scPath)
+	baseKeys, _ := a.GetActiveVehicleOrder(scPath)
 	if len(baseKeys) == 0 {
 		return nil
 	}
-    iniPath, err := a.getLocaleINIPath(scPath, localeName)
+	iniPath, err := a.getLocaleINIPath(scPath, localeName)
 	if err != nil {
 		return err
 	}
@@ -1248,12 +1266,12 @@ func (a *App) DeleteLocalization(scPath string, localeName string) error {
 	if current := a.GetUserLanguage(scPath); current != "" && current == localeName {
 		return fmt.Errorf("cannot delete locale currently in use")
 	}
-    // 刪除本機儲存區的語系資料夾
-    dir := filepath.Join(getLocalLocalizationBase(), localeName)
-    if _, err := os.Stat(dir); os.IsNotExist(err) {
-        return nil
-    }
-    return os.RemoveAll(dir)
+	// 刪除本機儲存區的語系資料夾
+	dir := filepath.Join(getLocalLocalizationBase(), localeName)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
+	return os.RemoveAll(dir)
 }
 
 // WriteINIFile 寫入 INI 檔案
@@ -1322,113 +1340,119 @@ func (a *App) ImportLocaleFile(scPath, localeName, sourceFilePath string) error 
 	if _, err := os.Stat(sourceFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("source file does not exist: %s", sourceFilePath)
 	}
-    // 寫入本機儲存區
-    base := getLocalLocalizationBase()
-    targetDir := filepath.Join(base, localeName)
-    if err := os.MkdirAll(targetDir, 0755); err != nil {
-        return err
-    }
-    data, err := os.ReadFile(sourceFilePath)
-    if err != nil { return err }
-    return os.WriteFile(filepath.Join(targetDir, "global.ini"), data, 0644)
+	// 寫入本機儲存區
+	base := getLocalLocalizationBase()
+	targetDir := filepath.Join(base, localeName)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(sourceFilePath)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(targetDir, "global.ini"), data, 0644)
 }
 
 // SaveLocalLocaleFromFile 將來源 global.ini 複製到本機儲存區的指定語系資料夾
 func (a *App) SaveLocalLocaleFromFile(localeName string, sourceFilePath string) (string, error) {
-    if strings.TrimSpace(localeName) == "" {
-        return "", fmt.Errorf("locale name is required")
-    }
-    if strings.TrimSpace(sourceFilePath) == "" {
-        return "", fmt.Errorf("source file path is required")
-    }
-    if _, err := os.Stat(sourceFilePath); err != nil {
-        return "", err
-    }
-    base := getLocalLocalizationBase()
-    targetDir := filepath.Join(base, localeName)
-    if err := os.MkdirAll(targetDir, 0755); err != nil {
-        return "", err
-    }
-    dest := filepath.Join(targetDir, "global.ini")
-    data, err := os.ReadFile(sourceFilePath)
-    if err != nil { return "", err }
-    if err := os.WriteFile(dest, data, 0644); err != nil { return "", err }
-    return dest, nil
+	if strings.TrimSpace(localeName) == "" {
+		return "", fmt.Errorf("locale name is required")
+	}
+	if strings.TrimSpace(sourceFilePath) == "" {
+		return "", fmt.Errorf("source file path is required")
+	}
+	if _, err := os.Stat(sourceFilePath); err != nil {
+		return "", err
+	}
+	base := getLocalLocalizationBase()
+	targetDir := filepath.Join(base, localeName)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(targetDir, "global.ini")
+	data, err := os.ReadFile(sourceFilePath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return "", err
+	}
+	return dest, nil
 }
 
 // ApplyLocalLocaleToGame 將本機儲存區的語系檔套用到遊戲資料夾（需要提權）
 func (a *App) ApplyLocalLocaleToGame(scPath, localeName string) error {
-    if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
-        return fmt.Errorf("invalid Star Citizen path")
-    }
-    src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
-    if _, err := os.Stat(src); err != nil {
-        return fmt.Errorf("local locale not found: %s", src)
-    }
-    // 先依 active.json 生成已套用排序的暫存檔，再提權拷貝到遊戲資料夾
-    orderedPath, err := a.BuildOrderedLocaleToTemp(scPath, localeName)
-    if err == nil && orderedPath != "" {
-        return a.InstallLocaleFromFileElevated(scPath, localeName, orderedPath)
-    }
-    // 若無排序可套用或產生失敗，直接套用本機原檔
-    return a.InstallLocaleFromFileElevated(scPath, localeName, src)
+	if scPath == "" || !a.ValidateStarCitizenPath(scPath) {
+		return fmt.Errorf("invalid Star Citizen path")
+	}
+	src := filepath.Join(getLocalLocalizationBase(), localeName, "global.ini")
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("local locale not found: %s", src)
+	}
+	// 先依 active.json 生成已套用排序的暫存檔，再提權拷貝到遊戲資料夾
+	orderedPath, err := a.BuildOrderedLocaleToTemp(scPath, localeName)
+	if err == nil && orderedPath != "" {
+		return a.InstallLocaleFromFileElevated(scPath, localeName, orderedPath)
+	}
+	// 若無排序可套用或產生失敗，直接套用本機原檔
+	return a.InstallLocaleFromFileElevated(scPath, localeName, src)
 }
 
 // BuildOrderedLocaleToTemp 讀取本機語系檔，依 active.json 套用載具排序後輸出到本機暫存，回傳檔案路徑
 func (a *App) BuildOrderedLocaleToTemp(scPath, localeName string) (string, error) {
-    if strings.TrimSpace(localeName) == "" {
-        return "", fmt.Errorf("invalid locale name")
-    }
-    // 取得排序清單
-    baseKeys, _ := a.GetActiveVehicleOrder(scPath)
-    if len(baseKeys) == 0 {
-        return "", fmt.Errorf("no active order")
-    }
-    iniPath, err := a.getLocaleINIPath(scPath, localeName)
-    if err != nil {
-        return "", err
-    }
-    items, err := a.ReadINIFile(iniPath)
-    if err != nil {
-        return "", err
-    }
-    orderMap := map[string]int{}
-    for i, k := range baseKeys {
-        orderMap[k] = i + 1
-    }
-    newItems := make([]INIKeyValue, 0, len(items))
-    for _, it := range items {
-        if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
-            base := makeBaseKey(it.Key)
-            clean := stripPrefix(it.Value)
-            if ord, ok := orderMap[base]; ok {
-                v := fmt.Sprintf("%03d %s", ord, clean)
-                newItems = append(newItems, INIKeyValue{Key: it.Key, Value: v})
-                continue
-            }
-            newItems = append(newItems, INIKeyValue{Key: it.Key, Value: clean})
-        } else {
-            newItems = append(newItems, it)
-        }
-    }
-    // 輸出到暫存
-    tmpDir := getLocalTmpDir()
-    if err := os.MkdirAll(tmpDir, 0755); err != nil {
-        return "", err
-    }
-    out := filepath.Join(tmpDir, fmt.Sprintf("ordered-%s.ini", localeName))
-    if err := writeINIWithFormat(out, newItems, "\r\n", true); err != nil {
-        return "", err
-    }
-    return out, nil
+	if strings.TrimSpace(localeName) == "" {
+		return "", fmt.Errorf("invalid locale name")
+	}
+	// 取得排序清單
+	baseKeys, _ := a.GetActiveVehicleOrder(scPath)
+	if len(baseKeys) == 0 {
+		return "", fmt.Errorf("no active order")
+	}
+	iniPath, err := a.getLocaleINIPath(scPath, localeName)
+	if err != nil {
+		return "", err
+	}
+	items, err := a.ReadINIFile(iniPath)
+	if err != nil {
+		return "", err
+	}
+	orderMap := map[string]int{}
+	for i, k := range baseKeys {
+		orderMap[k] = i + 1
+	}
+	newItems := make([]INIKeyValue, 0, len(items))
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it.Key), "vehicle_name") {
+			base := makeBaseKey(it.Key)
+			clean := stripPrefix(it.Value)
+			if ord, ok := orderMap[base]; ok {
+				v := fmt.Sprintf("%03d %s", ord, clean)
+				newItems = append(newItems, INIKeyValue{Key: it.Key, Value: v})
+				continue
+			}
+			newItems = append(newItems, INIKeyValue{Key: it.Key, Value: clean})
+		} else {
+			newItems = append(newItems, it)
+		}
+	}
+	// 輸出到暫存
+	tmpDir := getLocalTmpDir()
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return "", err
+	}
+	out := filepath.Join(tmpDir, fmt.Sprintf("ordered-%s.ini", localeName))
+	if err := writeINIWithFormat(out, newItems, "\r\n", true); err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func getLocalTmpDir() string {
-    base := os.Getenv("LOCALAPPDATA")
-    if base == "" {
-        base = os.TempDir()
-    }
-    return filepath.Join(base, "zh-tool", "tmp")
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "zh-tool", "tmp")
 }
 
 // DownloadToTemp 下載檔案到使用者本機暫存資料夾，回傳完整路徑
@@ -1573,70 +1597,72 @@ func (a *App) InstallLocaleFromFileElevated(scPath, localeName, sourceFilePath s
 
 // getLocalDataBase 回傳使用者本機資料目錄：%LOCALAPPDATA%\Squadron978\zh-tool
 func getLocalDataBase() string {
-    base := os.Getenv("LOCALAPPDATA")
-    if base == "" {
-        if home, err := os.UserHomeDir(); err == nil {
-            base = filepath.Join(home, "AppData", "Local")
-        } else {
-            base = os.TempDir()
-        }
-    }
-    return filepath.Join(base, "Squadron978", "zh-tool")
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			base = filepath.Join(home, "AppData", "Local")
+		} else {
+			base = os.TempDir()
+		}
+	}
+	return filepath.Join(base, "Squadron978", "zh-tool")
 }
 
 // getLocalLocalizationBase 回傳本機語系檔根目錄：%LOCALAPPDATA%\Squadron978\zh-tool\Localization
 func getLocalLocalizationBase() string {
-    return filepath.Join(getLocalDataBase(), "Localization")
+	return filepath.Join(getLocalDataBase(), "Localization")
 }
 
 // migrateSortDataIfNeeded 若新路徑下無 active.json/save，嘗試從舊的遊戲資料夾位置搬移
 func migrateSortDataIfNeeded(scPath string, newBase string) error {
-    // 新位置已有資料則不動
-    newActive := filepath.Join(newBase, "active.json")
-    newSave := filepath.Join(newBase, "save")
-    if _, err := os.Stat(newActive); err == nil {
-        return nil
-    }
-    if entries, err := os.ReadDir(newSave); err == nil && len(entries) > 0 {
-        return nil
-    }
+	// 新位置已有資料則不動
+	newActive := filepath.Join(newBase, "active.json")
+	newSave := filepath.Join(newBase, "save")
+	if _, err := os.Stat(newActive); err == nil {
+		return nil
+	}
+	if entries, err := os.ReadDir(newSave); err == nil && len(entries) > 0 {
+		return nil
+	}
 
-    // 舊位置候選：<scPath>/<LIVE|PTU|EPTU>/data/Sort
-    if scPath == "" {
-        return nil
-    }
-    candidates := []string{"LIVE", "PTU", "EPTU"}
-    var oldBase string
-    for _, vf := range candidates {
-        b := filepath.Join(scPath, vf, "data", "Sort")
-        if _, err := os.Stat(b); err == nil {
-            oldBase = b
-            break
-        }
-    }
-    if oldBase == "" {
-        return nil
-    }
+	// 舊位置候選：<scPath>/<LIVE|PTU|EPTU>/data/Sort
+	if scPath == "" {
+		return nil
+	}
+	candidates := []string{"LIVE", "PTU", "EPTU"}
+	var oldBase string
+	for _, vf := range candidates {
+		b := filepath.Join(scPath, vf, "data", "Sort")
+		if _, err := os.Stat(b); err == nil {
+			oldBase = b
+			break
+		}
+	}
+	if oldBase == "" {
+		return nil
+	}
 
-    // 搬移 active.json 與 save/*.json
-    _ = os.MkdirAll(newSave, 0755)
-    if data, err := os.ReadFile(filepath.Join(oldBase, "active.json")); err == nil {
-        _ = os.WriteFile(newActive, data, 0644)
-    }
-    if entries, err := os.ReadDir(filepath.Join(oldBase, "save")); err == nil {
-        for _, e := range entries {
-            if e.IsDir() { continue }
-            name := e.Name()
-            if strings.HasSuffix(strings.ToLower(name), ".json") {
-                src := filepath.Join(oldBase, "save", name)
-                dst := filepath.Join(newSave, name)
-                if data, err := os.ReadFile(src); err == nil {
-                    _ = os.WriteFile(dst, data, 0644)
-                }
-            }
-        }
-    }
-    return nil
+	// 搬移 active.json 與 save/*.json
+	_ = os.MkdirAll(newSave, 0755)
+	if data, err := os.ReadFile(filepath.Join(oldBase, "active.json")); err == nil {
+		_ = os.WriteFile(newActive, data, 0644)
+	}
+	if entries, err := os.ReadDir(filepath.Join(oldBase, "save")); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasSuffix(strings.ToLower(name), ".json") {
+				src := filepath.Join(oldBase, "save", name)
+				dst := filepath.Join(newSave, name)
+				if data, err := os.ReadFile(src); err == nil {
+					_ = os.WriteFile(dst, data, 0644)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // windowsJoinArgs 以 Windows 規則組合命令列參數，必要時加上雙引號並跳脫

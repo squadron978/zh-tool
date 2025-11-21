@@ -14,8 +14,7 @@ export const GettingStarted = () => {
   const [installLogs, setInstallLogs] = useState<string[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const logRef = useRef<HTMLDivElement | null>(null);
-  const [tabsValue, setTabsValue] = useState<'tab-auto' | 'tab-locale-path' | 'tab-locale-files' | 'tab-locale-compare' | 'tab-locale-editor'>('tab-auto');
-  const [advancedNotice, setAdvancedNotice] = useState('');
+  const [tabsValue, setTabsValue] = useState<'tab-auto' | 'tab-locale-files' | 'tab-locale-compare' | 'tab-locale-editor'>('tab-auto');
 
   // 追蹤目前是否已有 chinese_tranditional
   useEffect(() => {
@@ -68,8 +67,6 @@ export const GettingStarted = () => {
 
   const handleDownloadInstall = async () => {
     if (!isPathValid || !scPath) {
-      setAdvancedNotice('請重新設定至正確的安裝目錄');
-      setTabsValue('tab-locale-path');
       setInstallMsg({ type: 'error', text: '請重新設定至正確的安裝目錄' });
       return;
     }
@@ -148,12 +145,6 @@ export const GettingStarted = () => {
             自動中文化
           </Tabs.Trigger>
           <Tabs.Trigger
-            value="tab-locale-path"
-            className="px-4 py-2 text-sm rounded-t-lg data-[state=active]:bg-orange-900/30 data-[state=active]:text-orange-300 text-gray-300 hover:text-white"
-          >
-            進階設定
-          </Tabs.Trigger>
-          <Tabs.Trigger
             value="tab-locale-files"
             className="px-4 py-2 text-sm rounded-t-lg data-[state=active]:bg-orange-900/30 data-[state=active]:text-orange-300 text-gray-300 hover:text-white"
           >
@@ -175,6 +166,10 @@ export const GettingStarted = () => {
 
         <Tabs.Content value="tab-auto" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
           <div className="space-y-5">
+            {/* 遊戲路徑設定 */}
+            <PathSelector showPathSection={true} showLocaleSection={false} />
+
+            {/* 自動安裝中文化 */}
             <div className="bg-gradient-to-br from-gray-900 to-black border border-orange-900/30 rounded-xl p-5 shadow-2xl">
               <h3 className="text-xl font-bold text-orange-500 mb-4">自動安裝中文化</h3>
               {installMsg && (
@@ -206,18 +201,8 @@ export const GettingStarted = () => {
                   </div>
                 </div>
               )}
-              {!isPathValid && (
-                <p className="mt-2 text-xs text-gray-500">需先選擇有效的 Star Citizen 安裝目錄才能下載與安裝，請切請至進階設定頁面進行設定。</p>
-              )}
             </div>
           </div>
-        </Tabs.Content>
-
-        <Tabs.Content value="tab-locale-path" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
-          {advancedNotice && (
-            <div className="mb-3 text-sm text-orange-300 bg-orange-950/30 border border-orange-900/50 rounded px-3 py-2">{advancedNotice}</div>
-          )}
-          <PathSelector showPathSection={true} showLocaleSection={false} />
         </Tabs.Content>
 
         <Tabs.Content value="tab-locale-files" className="w-full p-4 rounded-lg bg-black/30 border border-orange-900/30">
